@@ -45,6 +45,18 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
+
+import {
+  ModelSelector as CategorySelector,
+  ModelSelectorContent as CategorySelectorContent,
+  ModelSelectorEmpty as CategorySelectorEmpty,
+  ModelSelectorGroup as CategorySelectorGroup,
+  ModelSelectorInput as CategorySelectorInput,
+  ModelSelectorItem as CategorySelectorItem,
+  ModelSelectorList as CategorySelectorList,
+  ModelSelectorName as CategorySelectorName,
+  ModelSelectorTrigger as CategorySelectorTrigger,
+} from "@/components/ai-elements/model-selector";
 import {
   PromptInput,
   PromptInputActionAddAttachments,
@@ -73,7 +85,7 @@ import {
 } from "@/components/ai-elements/sources";
 import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
-import { CheckIcon, GlobeIcon, MenuIcon, MessageCircleIcon, LibraryIcon } from "lucide-react";
+import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, MessageCircleIcon, LibraryIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -345,6 +357,7 @@ const Example = () => {
 
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -403,6 +416,12 @@ const Example = () => {
   const clearCategories = useCallback(() => {
     setSelectedCategories([]);
   }, []);
+
+  const selectedCategoryLabel = useMemo(() => {
+    if (!selectedCategories.length) return "All categories";
+    if (selectedCategories.length === 1) return selectedCategories[0];
+    return `${selectedCategories.length} categories`;
+  }, [selectedCategories]);
 
   const selectedModelData = useMemo(
     () => models.find((m) => m.id === model),
@@ -786,54 +805,68 @@ const Example = () => {
           <PromptInput globalDrop multiple onSubmit={handleSubmit}>
             <PromptInputHeader>
               <PromptInputAttachmentsDisplay />
-              <div className="mt-3 rounded-2xl border border-red-200/70 bg-white/80 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium text-slate-800">Knowledge categories</div>
-                  <div className="flex items-center gap-2">
-                    {selectedCategories.length > 0 ? (
-                      <Badge variant="secondary">{selectedCategories.length} selected</Badge>
-                    ) : (
-                      <Badge variant="secondary">All</Badge>
-                    )}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <CategorySelector
+                  open={categorySelectorOpen}
+                  onOpenChange={setCategorySelectorOpen}
+                >
+                  <CategorySelectorTrigger asChild>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      onClick={clearCategories}
-                      disabled={selectedCategories.length === 0}
+                      className="gap-2"
                     >
-                      Clear
+                      <BrainIcon size={16} />
+                      <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
+                      {selectedCategories.length > 0 ? (
+                        <Badge variant="secondary">{selectedCategories.length}</Badge>
+                      ) : null}
                     </Button>
-                  </div>
-                </div>
+                  </CategorySelectorTrigger>
 
-                {availableCategories.length ? (
-                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                    {availableCategories.map((cat) => {
-                      const active = selectedCategories.includes(cat);
-                      return (
-                        <Button
-                          key={cat}
-                          type="button"
-                          variant={active ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => toggleCategory(cat)}
-                          className="justify-start"
+                  <CategorySelectorContent title="Knowledge Categories">
+                    <CategorySelectorInput placeholder="Search categories..." />
+                    <CategorySelectorList>
+                      <CategorySelectorEmpty>No categories found.</CategorySelectorEmpty>
+                      <CategorySelectorGroup heading="Knowledge">
+                        <CategorySelectorItem
+                          onSelect={() => {
+                            clearCategories();
+                            setCategorySelectorOpen(false);
+                          }}
+                          value="__all__"
                         >
-                          {cat}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="mt-2 text-xs text-slate-500">
-                    No categories found yet. Upload PDFs in Knowledge.
-                  </div>
-                )}
+                          <span className="mr-2 inline-flex size-4 items-center justify-center">
+                            {selectedCategories.length === 0 ? (
+                              <CheckIcon className="size-4" />
+                            ) : null}
+                          </span>
+                          All categories
+                        </CategorySelectorItem>
+                        {availableCategories.map((cat) => {
+                          const active = selectedCategories.includes(cat);
+                          return (
+                            <CategorySelectorItem
+                              key={cat}
+                              onSelect={() => toggleCategory(cat)}
+                              value={cat}
+                            >
+                              <span className="mr-2 inline-flex size-4 items-center justify-center">
+                                {active ? <CheckIcon className="size-4" /> : null}
+                              </span>
+                              {cat}
+                            </CategorySelectorItem>
+                          );
+                        })}
+                      </CategorySelectorGroup>
+                    </CategorySelectorList>
+                  </CategorySelectorContent>
+                </CategorySelector>
 
-                <div className="mt-2 text-xs text-slate-500">
+                <span className="text-xs text-slate-500">
                   If none selected, chat searches across all knowledge.
-                </div>
+                </span>
               </div>
             </PromptInputHeader>
             <PromptInputBody>

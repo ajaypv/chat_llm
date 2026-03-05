@@ -29,6 +29,7 @@ class OCIOutageEnergyLLM:
         self._user_id = "remote_llm"
         self._suggestion_out = SuggestionModel().build_suggestion_model()
         self._out_query = SUGGESTION_QUERY
+        self._active_categories: list[str] = []
 
     def _build_agent(self) -> CompiledStateGraph:
         """Builds the LLM agent for the outage and energy agent."""
@@ -49,8 +50,10 @@ class OCIOutageEnergyLLM:
             checkpointer= InMemorySaver()
         )
     
-    async def oci_stream(self, query, session_id) -> AsyncIterable[dict[str, Any]]:
+    async def oci_stream(self, query, session_id, categories: list[str] | None = None) -> AsyncIterable[dict[str, Any]]:
         """ Function to call agent and stream responses """
+
+        self._active_categories = [str(c).strip() for c in (categories or []) if str(c).strip()]
         
         current_message = {"messages":[HumanMessage(query)]}
         config:RunnableConfig = {"run_id":str(session_id), "configurable": {"thread_id": str(session_id)}}
