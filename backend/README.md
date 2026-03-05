@@ -22,6 +22,28 @@ Health check:
 
 - http://localhost:8000/health
 
+## Knowledge (PDF upload + embeddings)
+
+Upload PDFs to build the vector store:
+
+- `POST /knowledge/upload` (multipart form-data)
+	- `category`: folder name (A-Z, 0-9, `_`, `-`)
+	- `files`: one or more PDF files
+
+Files are stored on disk under:
+
+- `backend/knowledge/<category>/*.pdf`
+
+When a PDF is uploaded, the backend enqueues an embedding job in Oracle and a background worker (running inside the FastAPI process) will:
+
+- load/chunk the PDF
+- generate embeddings via OCI GenAI
+- insert vectors into `{DB_TABLE_PREFIX}_embedding`
+
+Job status:
+
+- `GET /knowledge/jobs/{job_id}`
+
 ## Notes
 
 - Configuration is via `.env` (OCI GenAI + DB wallet settings).

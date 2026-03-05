@@ -1,10 +1,21 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { FileUpIcon, UploadCloudIcon } from "lucide-react";
 
 export default function KnowledgePage() {
   const [files, setFiles] = useState<File[]>([]);
+  const [category, setCategory] = useState<string>("general");
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [uploadResult, setUploadResult] = useState<
+    { filename: string; category: string; path: string }[]
+  >([]);
+  const [jobStatuses, setJobStatuses] = useState<
+    Record<number, { status: string; progress_pct: number; message?: string | null }>
+  >({});
 
   const onPickFiles = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -12,9 +23,111 @@ export default function KnowledgePage() {
         (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
       );
       setFiles(picked);
+      setUploadError(null);
+      setUploadSuccess(null);
+      setUploadResult([]);
+      setUploadProgress(0);
+      setJobStatuses({});
     },
     []
   );
+
+  const canUpload = useMemo(() => {
+    const cat = category.trim();
+    return files.length > 0 && /^[A-Za-z0-9_-]+$/.test(cat) && cat.length <= 64;
+  }, [category, files.length]);
+
+  const onUpload = useCallback(async () => {
+    setUploadError(null);
+    setUploadSuccess(null);
+    setUploadResult([]);
+    setUploadProgress(0);
+    setJobStatuses({});
+
+    const cat = category.trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(cat) || cat.length > 64) {
+      setUploadError("Category must match A-Z, 0-9, underscore, dash (max 64). ");
+      return;
+    }
+    if (files.length === 0) {
+      setUploadError("Please select at least one PDF.");
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      const form = new FormData();
+      form.set("category", cat);
+      for (const f of files) form.append("files", f);
+
+      const json = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "http://localhost:8001/knowledge/upload");
+
+        xhr.upload.onprogress = (evt) => {
+          if (!evt.lengthComputable) return;
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          setUploadProgress(pct);
+        };
+
+        xhr.onerror = () => reject(new Error("Network error"));
+        xhr.onload = () => {
+          let parsed: any = null;
+          try {
+            parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          } catch {
+            parsed = null;
+          }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(parsed);
+          } else {
+            const msg = parsed?.detail ?? parsed?.error ?? `Upload failed (${xhr.status})`;
+            reject(new Error(msg));
+          }
+        };
+
+        xhr.send(form);
+      });
+
+      const saved = Array.isArray(json?.saved) ? json.saved : [];
+      setUploadResult(saved);
+      setUploadProgress(100);
+      setUploadSuccess(`Uploaded ${saved.length || files.length} file(s) successfully.`);
+
+      const jobIds: number[] = Array.isArray(json?.job_ids) ? json.job_ids : [];
+      if (jobIds.length > 0) {
+        // Poll statuses until all done.
+        const done = new Set<number>();
+        const poll = async () => {
+          await Promise.all(
+            jobIds.map(async (id) => {
+              if (done.has(id)) return;
+              try {
+                const res = await fetch(`http://localhost:8001/knowledge/jobs/${id}`);
+                const j = await res.json();
+                const status = String(j?.status ?? "unknown");
+                const pct = Number(j?.progress_pct ?? 0);
+                const msg = j?.message ?? null;
+                setJobStatuses((prev) => ({
+                  ...prev,
+                  [id]: { status, progress_pct: Number.isFinite(pct) ? pct : 0, message: msg },
+                }));
+                if (status === "completed" || status === "failed") done.add(id);
+              } catch {
+                // ignore transient polling failures
+              }
+            })
+          );
+          if (done.size < jobIds.length) setTimeout(poll, 1500);
+        };
+        poll();
+      }
+    } catch (err: any) {
+      setUploadError(err?.message ?? "Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  }, [category, files]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
@@ -78,6 +191,102 @@ export default function KnowledgePage() {
               />
             </label>
 
+            <div className="mt-5 grid gap-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-700">
+                  Category
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Stored under backend/knowledge/&lt;category&gt;/. Allowed: A-Z, 0-9, _ and -
+                </div>
+                <input
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="general"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-[#C74634]/30"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={onUpload}
+                disabled={!canUpload || isUploading}
+                className="inline-flex w-full items-center justify-center rounded-xl bg-[#C74634] px-3 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isUploading ? `Uploading… ${uploadProgress}%` : "Upload to backend"}
+              </button>
+
+              {isUploading ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-3">
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span className="font-semibold text-slate-700">Upload progress</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full bg-[#C74634]"
+                      style={{ width: `${Math.min(100, Math.max(0, uploadProgress))}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {uploadError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  {uploadError}
+                </div>
+              ) : null}
+
+              {uploadSuccess ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  {uploadSuccess}
+                </div>
+              ) : null}
+
+              {uploadResult.length > 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-xs font-semibold text-slate-700">
+                    Uploaded
+                  </div>
+                  <ul className="mt-2 space-y-1 text-sm text-slate-900">
+                    {uploadResult.map((r) => (
+                      <li key={r.path} className="truncate">
+                        {r.filename}
+                        <span className="ml-2 text-xs text-slate-500">({r.path})</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {Object.keys(jobStatuses).length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+                      <div className="text-xs font-semibold text-slate-700">Embedding jobs</div>
+                      <ul className="mt-2 space-y-2 text-xs text-slate-700">
+                        {Object.entries(jobStatuses)
+                          .sort((a, b) => Number(a[0]) - Number(b[0]))
+                          .map(([id, s]) => (
+                            <li key={id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold">Job #{id}</span>
+                                <span>{s.status} • {s.progress_pct}%</span>
+                              </div>
+                              {s.message ? (
+                                <div className="mt-1 text-slate-500">{s.message}</div>
+                              ) : null}
+                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                                <div
+                                  className="h-full bg-[#C74634]"
+                                  style={{ width: `${Math.min(100, Math.max(0, s.progress_pct))}%` }}
+                                />
+                              </div>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+
             {files.length > 0 ? (
               <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-semibold text-slate-700">
@@ -95,7 +304,7 @@ export default function KnowledgePage() {
                 </ul>
 
                 <div className="mt-4 text-xs text-slate-500">
-                  Upload is not wired to the backend yet.
+                  Files will be uploaded to the backend.
                 </div>
               </div>
             ) : (
