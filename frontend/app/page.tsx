@@ -75,8 +75,11 @@ import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { CheckIcon, GlobeIcon, MenuIcon, MessageCircleIcon, LibraryIcon } from "lucide-react";
 import { nanoid } from "nanoid";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface MessageType {
   key: string;
@@ -225,6 +228,8 @@ const parseBackendStatus = (
 
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
 
+const SELECTED_CATEGORIES_STORAGE_KEY = "rag.selectedCategories";
+
 const delay = (ms: number): Promise<void> =>
   // eslint-disable-next-line promise/avoid-new -- setTimeout requires a new Promise
   new Promise((resolve) => {
@@ -338,6 +343,67 @@ const Example = () => {
   const [messages, setMessages] = useState<MessageType[]>(initialMessages);
   const [, setStreamingMessageId] = useState<string | null>(null);
 
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SELECTED_CATEGORIES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          setSelectedCategories(parsed.map((c) => String(c)).filter((c) => c.trim()));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/knowledge/categories`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { categories?: unknown };
+        if (cancelled) return;
+        const cats = Array.isArray(data.categories)
+          ? (data.categories.map((c) => String(c)) as string[])
+          : [];
+        setAvailableCategories(cats);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SELECTED_CATEGORIES_STORAGE_KEY,
+        JSON.stringify(selectedCategories)
+      );
+    } catch {
+      // ignore
+    }
+  }, [selectedCategories]);
+
+  const toggleCategory = useCallback((cat: string) => {
+    const c = String(cat).trim();
+    if (!c) return;
+    setSelectedCategories((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+    );
+  }, []);
+
+  const clearCategories = useCallback(() => {
+    setSelectedCategories([]);
+  }, []);
+
   const selectedModelData = useMemo(
     () => models.find((m) => m.id === model),
     [model]
@@ -394,7 +460,11 @@ const Example = () => {
       const res = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: content, session_id: String(Date.now()) }),
+        body: JSON.stringify({
+          query: content,
+          session_id: String(Date.now()),
+          categories: selectedCategories,
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -492,7 +562,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, updateMessageContent]
+    [appendToolEvent, selectedCategories, updateMessageContent]
   );
 
   const addUserMessage = useCallback(
@@ -716,6 +786,55 @@ const Example = () => {
           <PromptInput globalDrop multiple onSubmit={handleSubmit}>
             <PromptInputHeader>
               <PromptInputAttachmentsDisplay />
+              <div className="mt-3 rounded-2xl border border-red-200/70 bg-white/80 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-slate-800">Knowledge categories</div>
+                  <div className="flex items-center gap-2">
+                    {selectedCategories.length > 0 ? (
+                      <Badge variant="secondary">{selectedCategories.length} selected</Badge>
+                    ) : (
+                      <Badge variant="secondary">All</Badge>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearCategories}
+                      disabled={selectedCategories.length === 0}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+
+                {availableCategories.length ? (
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                    {availableCategories.map((cat) => {
+                      const active = selectedCategories.includes(cat);
+                      return (
+                        <Button
+                          key={cat}
+                          type="button"
+                          variant={active ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => toggleCategory(cat)}
+                          className="justify-start"
+                        >
+                          {cat}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-slate-500">
+                    No categories found yet. Upload PDFs in Knowledge.
+                  </div>
+                )}
+
+                <div className="mt-2 text-xs text-slate-500">
+                  If none selected, chat searches across all knowledge.
+                </div>
+              </div>
             </PromptInputHeader>
             <PromptInputBody>
               <PromptInputTextarea onChange={handleTextChange} value={text} />

@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { FileUpIcon, UploadCloudIcon } from "lucide-react";
 
 export default function KnowledgePage() {
+  const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [category, setCategory] = useState<string>("general");
   const [isUploading, setIsUploading] = useState(false);
@@ -16,6 +18,7 @@ export default function KnowledgePage() {
   const [jobStatuses, setJobStatuses] = useState<
     Record<number, { status: string; progress_pct: number; message?: string | null }>
   >({});
+  const [batchJobId, setBatchJobId] = useState<number | null>(null);
 
   const onPickFiles = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,6 +31,7 @@ export default function KnowledgePage() {
       setUploadResult([]);
       setUploadProgress(0);
       setJobStatuses({});
+      setBatchJobId(null);
     },
     []
   );
@@ -43,6 +47,7 @@ export default function KnowledgePage() {
     setUploadResult([]);
     setUploadProgress(0);
     setJobStatuses({});
+    setBatchJobId(null);
 
     const cat = category.trim();
     if (!/^[A-Za-z0-9_-]+$/.test(cat) || cat.length > 64) {
@@ -62,7 +67,7 @@ export default function KnowledgePage() {
 
       const json = await new Promise<any>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", "http://localhost:8001/knowledge/upload");
+        xhr.open("POST", "http://localhost:8000/knowledge/upload");
 
         xhr.upload.onprogress = (evt) => {
           if (!evt.lengthComputable) return;
@@ -94,40 +99,17 @@ export default function KnowledgePage() {
       setUploadProgress(100);
       setUploadSuccess(`Uploaded ${saved.length || files.length} file(s) successfully.`);
 
-      const jobIds: number[] = Array.isArray(json?.job_ids) ? json.job_ids : [];
-      if (jobIds.length > 0) {
-        // Poll statuses until all done.
-        const done = new Set<number>();
-        const poll = async () => {
-          await Promise.all(
-            jobIds.map(async (id) => {
-              if (done.has(id)) return;
-              try {
-                const res = await fetch(`http://localhost:8001/knowledge/jobs/${id}`);
-                const j = await res.json();
-                const status = String(j?.status ?? "unknown");
-                const pct = Number(j?.progress_pct ?? 0);
-                const msg = j?.message ?? null;
-                setJobStatuses((prev) => ({
-                  ...prev,
-                  [id]: { status, progress_pct: Number.isFinite(pct) ? pct : 0, message: msg },
-                }));
-                if (status === "completed" || status === "failed") done.add(id);
-              } catch {
-                // ignore transient polling failures
-              }
-            })
-          );
-          if (done.size < jobIds.length) setTimeout(poll, 1500);
-        };
-        poll();
+      const jobId = typeof json?.job_id === "number" ? json.job_id : null;
+      setBatchJobId(jobId);
+      if (jobId) {
+        router.push(`/knowledge/jobs/${jobId}`);
       }
     } catch (err: any) {
       setUploadError(err?.message ?? "Upload failed");
     } finally {
       setIsUploading(false);
     }
-  }, [category, files]);
+  }, [category, files, router]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
@@ -257,16 +239,16 @@ export default function KnowledgePage() {
                     ))}
                   </ul>
 
-                  {Object.keys(jobStatuses).length > 0 ? (
+                  {batchJobId && Object.keys(jobStatuses).length > 0 ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-                      <div className="text-xs font-semibold text-slate-700">Embedding jobs</div>
+                      <div className="text-xs font-semibold text-slate-700">RAG pipeline (batch job)</div>
                       <ul className="mt-2 space-y-2 text-xs text-slate-700">
                         {Object.entries(jobStatuses)
                           .sort((a, b) => Number(a[0]) - Number(b[0]))
                           .map(([id, s]) => (
                             <li key={id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                               <div className="flex items-center justify-between">
-                                <span className="font-semibold">Job #{id}</span>
+                                <span className="font-semibold">Batch #{id}</span>
                                 <span>{s.status} • {s.progress_pct}%</span>
                               </div>
                               {s.message ? (

@@ -9,20 +9,55 @@ from database.connections import RAGDBConnection
 
 
 def iter_sql_statements(sql_text: str) -> list[str]:
-    # Very small splitter: good enough for our simple migration files.
-    # Strips line comments and splits on ';'.
-    lines: list[str] = []
-    for raw in sql_text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith("--"):
-            continue
-        lines.append(raw)
+    """Split a migration file into executable statements.
 
-    joined = "\n".join(lines)
-    parts = [p.strip() for p in joined.split(";")]
-    return [p for p in parts if p]
+    Supports:
+    - Regular SQL statements ending with ';'
+    - PL/SQL blocks terminated by a line containing only '/'
+    """
+    statements: list[str] = []
+    buf: list[str] = []
+    in_plsql = False
+
+    def flush() -> None:
+        nonlocal buf, in_plsql
+        text = "\n".join(buf).strip()
+        buf = []
+        in_plsql = False
+        if text:
+            statements.append(text)
+
+    for raw in sql_text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("--"):
+            continue
+
+        # A single '/' ends a PL/SQL block in SQL*Plus/SQLcl style.
+        if stripped == "/":
+            flush()
+            continue
+
+        if stripped.upper().startswith("DECLARE") or stripped.upper().startswith("BEGIN"):
+            in_plsql = True
+
+        # For normal SQL, split on semicolons.
+        if not in_plsql and ";" in raw:
+            parts = raw.split(";")
+            for i, part in enumerate(parts):
+                if i < len(parts) - 1:
+                    buf.append(part)
+                    flush()
+                else:
+                    if part.strip():
+                        buf.append(part)
+            continue
+
+        buf.append(raw)
+
+    flush()
+    return statements
 
 
 def main() -> int:
@@ -46,10 +81,11 @@ def main() -> int:
         return 0
 
     db = RAGDBConnection()
+    prefix = (db.table_prefix or "edge_demo").strip()
     with db.get_connection() as conn:
         for sql_path in sql_files:
             print(f"Applying {sql_path.name} ...")
-            sql_text = sql_path.read_text(encoding="utf-8")
+            sql_text = sql_path.read_text(encoding="utf-8").replace("${PREFIX}", prefix)
             statements = iter_sql_statements(sql_text)
             if not statements:
                 print(" - (empty)")

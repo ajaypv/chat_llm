@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
 from chat_app.main_llm import OCIOutageEnergyLLM
-from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_file, create_knowledge_job, get_knowledge_job
+from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
 
 load_dotenv()
@@ -85,12 +85,43 @@ def build_app() -> FastAPI:
         if not query:
             return {"error": "query is required"}
 
+        categories = payload.get("categories")
+        if categories is None:
+            categories_list: list[str] = []
+        elif isinstance(categories, list):
+            categories_list = [str(c).strip() for c in categories if str(c).strip()]
+        else:
+            categories_list = [str(categories).strip()] if str(categories).strip() else []
+
         session_id = payload.get("session_id") or "local"
+
+        # Always run RAG retrieval server-side so the experience doesn't depend on
+        # whether the model decides to invoke tools.
+        rag_context: str = ""
+        try:
+            from chat_app.rag_tool import semantic_search
+
+            rag_context = await semantic_search(
+                query=query,
+                top_k=int(payload.get("top_k") or 3),
+                categories=categories_list,
+            )
+        except Exception as e:
+            logger.warning("semantic_search failed: %s", str(e))
 
         async def gen():
             import json
             # Stream chunks as NDJSON so the frontend can update incrementally.
-            async for chunk in llm.oci_stream(query, session_id=session_id):
+            augmented = query
+            if rag_context:
+                augmented = (
+                    "Use the following retrieved knowledge context when helpful. "
+                    "If it is irrelevant, ignore it.\n\n"
+                    f"Retrieved context:\n{rag_context}\n\n"
+                    f"User question:\n{query}"
+                )
+
+            async for chunk in llm.oci_stream(augmented, session_id=session_id, categories=categories_list):
                 yield json.dumps(chunk) + "\n"
 
         return StreamingResponse(gen(), media_type="application/x-ndjson")
@@ -110,8 +141,16 @@ def build_app() -> FastAPI:
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         db = RAGDBConnection()
-        job_ids: list[int] = []
+        batch_job_id: int | None = None
         saved: list[dict[str, str]] = []
+
+        # Create a single batch job for the whole upload.
+        try:
+            with db.get_connection() as conn:
+                ensure_knowledge_tables(conn, db.table_prefix)
+                batch_job_id = create_knowledge_job(conn, db.table_prefix)
+        except Exception as e:
+            logger.warning("Failed to create batch knowledge job: %s", str(e))
         for f in files:
             if not f.filename:
                 continue
@@ -139,11 +178,13 @@ def build_app() -> FastAPI:
             if not data:
                 raise HTTPException(status_code=400, detail=f"empty file: {filename}")
             target.write_bytes(data)
+            logger.info(f"Saved file to disk: {target}")
 
             # Enqueue an embedding job in DB.
             try:
                 with db.get_connection() as conn:
                     ensure_knowledge_tables(conn, db.table_prefix)
+                    logger.info(f"Creating knowledge_file record for {target.name}")
                     file_id = create_knowledge_file(
                         conn,
                         db.table_prefix,
@@ -152,11 +193,16 @@ def build_app() -> FastAPI:
                         storage_path=str(target.relative_to(upload_root)).replace("\\", "/"),
                         size_bytes=len(data),
                     )
-                    job_id = create_knowledge_job(conn, db.table_prefix, file_id=file_id)
-                    job_ids.append(job_id)
+                    logger.info(f"Created knowledge_file #{file_id}")
+                    if batch_job_id is not None:
+                        logger.info(f"Adding file #{file_id} to job #{batch_job_id}")
+                        add_file_to_job(conn, db.table_prefix, job_id=batch_job_id, file_id=file_id)
+                        logger.info(f"Successfully linked file #{file_id} to job #{batch_job_id}")
+                    else:
+                        logger.warning(f"No batch_job_id, skipping add_file_to_job for {target.name}")
             except Exception as e:
                 # If DB isn't configured, still succeed storing file.
-                logger.warning("Failed to enqueue knowledge job: %s", str(e))
+                logger.exception(f"Failed to enqueue knowledge job for {target.name}: %s", str(e))
 
             saved.append(
                 {
@@ -166,7 +212,7 @@ def build_app() -> FastAPI:
                 }
             )
 
-        return {"ok": True, "saved": saved, "job_ids": job_ids}
+        return {"ok": True, "saved": saved, "job_id": batch_job_id}
 
     @app.get("/knowledge/jobs/{job_id}")
     async def knowledge_job_status(job_id: int):
@@ -207,6 +253,30 @@ def build_app() -> FastAPI:
                 }
             )
         return {"categories": categories}
+
+    @app.get("/knowledge/categories")
+    async def knowledge_categories():
+        """Return available knowledge categories from DB (preferred) with a filesystem fallback."""
+        db = RAGDBConnection()
+        try:
+            with db.get_connection() as conn:
+                ensure_knowledge_tables(conn, db.table_prefix)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT category
+                        FROM {db.table_prefix}_knowledge_file
+                        ORDER BY category
+                        """
+                    )
+                    cats = [str(r[0]) for r in (cur.fetchall() or []) if r and r[0] is not None]
+            return {"categories": cats}
+        except Exception:
+            # If DB isn't reachable, fall back to folders.
+            root = upload_root
+            root.mkdir(parents=True, exist_ok=True)
+            cats = [p.name for p in sorted([p for p in root.iterdir() if p.is_dir()])]
+            return {"categories": cats}
 
     async def _chat_stream(query: str, session_id: str):
         async def gen():

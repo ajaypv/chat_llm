@@ -18,7 +18,7 @@ def build_context_snippet(results: list[dict]) -> str:
     return "\n\n".join(context_parts)
 
 @tool()
-async def semantic_search(query: str, top_k: int = 3) -> str:
+async def semantic_search(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
     """Perform semantic search with cosine similarity to find relevant documents:
     [epa_actions_for_outages (US), fema_outage_flyer (US), general_disaster_manual (MEX)]
     """
@@ -32,15 +32,40 @@ async def semantic_search(query: str, top_k: int = 3) -> str:
         
         with db_conn.get_connection() as connection:
             cursor = connection.cursor()
-            
-            # Execute similarity search
-            cursor.execute(f"""
-                SELECT text, vector_distance(vec, :1, COSINE) AS distance, source
-                FROM {db_conn.table_prefix}_embedding
-                ORDER BY distance
-                FETCH FIRST {top_k} ROWS ONLY
-            """, [query_vec])
-            
+
+            cat_list = [str(c).strip() for c in (categories or []) if str(c).strip()]
+            if cat_list:
+                binds: list[object] = [query_vec]
+                placeholders = ",".join([f":{i+2}" for i in range(len(cat_list))])
+                binds.extend(cat_list)
+                cursor.execute(
+                    f"""
+                    SELECT e.text,
+                           vector_distance(e.embedding_vector, :1, COSINE) AS distance,
+                           e.source
+                    FROM {db_conn.table_prefix}_embedding e
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM {db_conn.table_prefix}_knowledge_file f
+                        WHERE f.storage_path = e.source
+                          AND f.category IN ({placeholders})
+                    )
+                    ORDER BY distance
+                    FETCH FIRST {top_k} ROWS ONLY
+                    """,
+                    binds,
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    SELECT text, vector_distance(embedding_vector, :1, COSINE) AS distance, source
+                    FROM {db_conn.table_prefix}_embedding
+                    ORDER BY distance
+                    FETCH FIRST {top_k} ROWS ONLY
+                    """,
+                    [query_vec],
+                )
+
             rows = cursor.fetchall()
             results = [{"text": r[0], "distance": r[1], "source": r[2]} for r in rows]
             cursor.close()
