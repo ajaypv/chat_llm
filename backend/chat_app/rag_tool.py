@@ -13,23 +13,30 @@ def build_context_snippet(results: list[dict]) -> str:
         return "No relevant documents found."
     context_parts = []
     for i, r in enumerate(results, 1):
-        snippet = r["text"].replace("\n", " ")
+        text_val = r.get("text")
+        # Oracle CLOB may arrive as a LOB object; convert safely.
+        if hasattr(text_val, "read"):
+            try:
+                text_val = text_val.read()
+            except Exception:
+                text_val = str(text_val)
+        snippet = str(text_val or "").replace("\n", " ")
         context_parts.append(f"[{i}] (Source: {r['source']}) {snippet}")
     return "\n\n".join(context_parts)
 
-@tool()
-async def semantic_search(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
-    """Perform semantic search with cosine similarity to find relevant documents:
-    [epa_actions_for_outages (US), fema_outage_flyer (US), general_disaster_manual (MEX)]
+
+async def semantic_search_raw(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
+    """Plain async function for semantic retrieval (callable from API code).
+
+    The @tool-wrapped variant below delegates to this.
     """
-    
     embed_provider = GenAIEmbedProvider()
     db_conn = RAGDBConnection()
-    
+
     try:
         query_response = embed_provider.embed_client.embed_query(query)
         query_vec = array.array("f", query_response)
-        
+
         with db_conn.get_connection() as connection:
             cursor = connection.cursor()
 
@@ -69,7 +76,15 @@ async def semantic_search(query: str, top_k: int = 3, categories: list[str] | No
             rows = cursor.fetchall()
             results = [{"text": r[0], "distance": r[1], "source": r[2]} for r in rows]
             cursor.close()
-        
+
         return build_context_snippet(results)
     except Exception as e:
         return f"Error performing semantic search: {str(e)}"
+
+@tool()
+async def semantic_search(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
+    """Perform semantic search with cosine similarity to find relevant documents:
+    [epa_actions_for_outages (US), fema_outage_flyer (US), general_disaster_manual (MEX)]
+    """
+    
+    return await semantic_search_raw(query=query, top_k=top_k, categories=categories)

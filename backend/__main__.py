@@ -99,9 +99,9 @@ def build_app() -> FastAPI:
         # whether the model decides to invoke tools.
         rag_context: str = ""
         try:
-            from chat_app.rag_tool import semantic_search
+            from chat_app.rag_tool import semantic_search_raw
 
-            rag_context = await semantic_search(
+            rag_context = await semantic_search_raw(
                 query=query,
                 top_k=int(payload.get("top_k") or 3),
                 categories=categories_list,
