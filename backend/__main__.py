@@ -116,11 +116,12 @@ def build_app() -> FastAPI:
         rag_debug_updates: list[str] = []
         try:
             from chat_app.rag_tool import semantic_search_raw
+            import json
 
             # Emit a tool-like status line so the frontend can render it in the Tool UI.
             rag_debug_updates.append(
                 "Model calling tool: semantic_search with args "
-                + str({"query": query, "top_k": top_k, "categories": categories_list})
+                + json.dumps({"query": query, "top_k": top_k, "categories": categories_list})
             )
 
             rag_context = await semantic_search_raw(

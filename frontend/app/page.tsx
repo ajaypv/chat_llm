@@ -87,7 +87,7 @@ import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, MessageCircleIcon, LibraryIcon } from "lucide-react";
 import { nanoid } from "nanoid";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -355,6 +355,11 @@ const Example = () => {
   const [messages, setMessages] = useState<MessageType[]>(initialMessages);
   const [, setStreamingMessageId] = useState<string | null>(null);
 
+  const messagesRef = useRef<MessageType[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
@@ -483,6 +488,7 @@ const Example = () => {
           query: content,
           session_id: String(Date.now()),
           categories: selectedCategories,
+          top_k: 10,
         }),
       });
 
@@ -528,7 +534,7 @@ const Example = () => {
                 appendToolEvent(messageId, {
                   toolCallId,
                   type: `tool-${parsed.toolName}`,
-                  state: "input-available",
+                  state: "input-streaming",
                   input: parsed.args,
                   output: undefined,
                   errorText: undefined,
@@ -536,11 +542,26 @@ const Example = () => {
               } else if (parsed.kind === "tool-result") {
                 const existingId = toolIdByName.get(parsed.toolName);
                 const toolCallId = existingId ?? `${messageId}-tool-${parsed.toolName}`;
+
+                const existingInput =
+                  toolCallId &&
+                  (() => {
+                    const msg = messagesRef.current?.find((m: MessageType) =>
+                      m.versions.some((v: { id: string }) => v.id === messageId)
+                    );
+                    const tool = msg?.tools?.find((t: any) => t.toolCallId === toolCallId);
+                    return (tool?.input ?? {}) as Record<string, unknown>;
+                  })();
+
+                // Defer tool completion a moment so the UI can paint the
+                // "running" state (input-streaming) first.
+                // eslint-disable-next-line no-await-in-loop -- intentional UX pacing
+                await delay(150);
                 appendToolEvent(messageId, {
                   toolCallId,
                   type: `tool-${parsed.toolName}`,
                   state: "output-available",
-                  input: {},
+                  input: existingInput || {},
                   output: parsed.result,
                   errorText: undefined,
                 });
