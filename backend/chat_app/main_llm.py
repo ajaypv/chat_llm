@@ -44,7 +44,7 @@ class OCIOutageEnergyLLM:
         return create_agent(
             model=oci_llm,
             # tools=[get_outage_data, get_energy_data, get_industry_data],
-            tools=[semantic_search],
+            tools=[semantic_search, nl2sql_tool],
             system_prompt=MAIN_LLM_INSTRUCTIONS,
             name="outage_energy_llm",
             checkpointer= InMemorySaver()

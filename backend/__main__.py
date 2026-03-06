@@ -114,6 +114,62 @@ def build_app() -> FastAPI:
         # whether the model decides to invoke tools.
         rag_context: str = ""
         rag_debug_updates: list[str] = []
+        nl2sql_result: str = ""
+
+        q_lower = str(query or "").lower()
+        restaurant_keywords = (
+            "restaurant",
+            "restaurants",
+            "menu",
+            "menus",
+            "menu item",
+            "menu items",
+            "dish",
+            "dishes",
+            "food item",
+            "food items",
+            "price",
+            "available",
+            "location",
+            "address",
+            "city",
+            "san francisco",
+            "los angeles",
+            "new york",
+        )
+        use_nl2sql = any(k in q_lower for k in restaurant_keywords)
+
+        if use_nl2sql:
+            try:
+                from chat_app.nl2sql_tool import nl2sql_tool
+                import json
+
+                rag_debug_updates.append(
+                    "Model calling tool: nl2sql_tool with args "
+                    + json.dumps({"question": query})
+                )
+                nl2sql_result = await nl2sql_tool.ainvoke({"question": query})
+                rag_debug_updates.append(
+                    "Tool nl2sql_tool responded with:\n" + str(nl2sql_result)
+                )
+            except Exception as e:
+                logger.warning("[rid=%s] nl2sql_tool failed: %s", request_id, str(e))
+                nl2sql_result = ""
+
+        # If NL2SQL was selected, return DB results directly (markdown), without
+        # running semantic search or streaming a separate LLM answer.
+        if use_nl2sql and nl2sql_result:
+            async def gen_nl2sql_only():
+                import json
+
+                for u in rag_debug_updates:
+                    yield json.dumps({"updates": u}) + "\n"
+
+                # Return markdown directly as the assistant response.
+                yield json.dumps({"delta": str(nl2sql_result)}) + "\n"
+
+            return StreamingResponse(gen_nl2sql_only(), media_type="application/x-ndjson")
+
         try:
             from chat_app.rag_tool import semantic_search_raw
             import json
@@ -138,8 +194,10 @@ def build_app() -> FastAPI:
             logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
 
         logger.info(
-            "[rid=%s] /chat: rag_context_present=%s",
+            "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
             request_id,
+            use_nl2sql,
+            bool(nl2sql_result),
             bool(rag_context and "No relevant documents found" not in rag_context),
         )
 
@@ -154,7 +212,16 @@ def build_app() -> FastAPI:
             # Stream chunks as NDJSON so the frontend can update incrementally.
             augmented = query
             selected_cats = categories_list
-            if rag_context:
+            if nl2sql_result:
+                augmented = (
+                    "You are answering a user question using database query results.\n"
+                    "Use the results below as the source of truth.\n"
+                    "If the results are empty, say no matching records were found.\n\n"
+                    f"Database results:\n{nl2sql_result}\n\n"
+                    f"User question:\n{query}\n\n"
+                    "Answer:\n"
+                )
+            elif rag_context:
                 augmented = (
                     "You are answering a user question using retrieved knowledge snippets.\n"
                     "Follow these rules:\n"
