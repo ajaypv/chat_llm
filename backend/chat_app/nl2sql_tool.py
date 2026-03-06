@@ -162,6 +162,76 @@ async def nl2sql_tool(question: str) -> str:
             return f"![{alt}]({u})\n\n"
 
         lines: list[str] = []
+
+        is_menu_items = (
+            ("item_name" in cols_l or ("name" in cols_l and "restaurant_name" in cols_l))
+            and any(c in cols_l for c in ["category", "price", "currency", "available"])
+        )
+
+        if is_menu_items:
+            header = "| Item | Category | Price | Available | Image |"
+            sep = "|---|---|---:|:---:|---|"
+            table_rows: list[str] = []
+            descriptions: list[str] = []
+
+            for row in rows:
+                restaurant_name = _get(row, "restaurant_name")
+                item_name = _get(row, "item_name") or _get(row, "name")
+                category = _get(row, "category")
+                price = _get(row, "price")
+                currency = _get(row, "currency")
+                available = _get(row, "available")
+                image_url = _get(row, "image_url")
+                description = _get(row, "description")
+
+                item_label = str(item_name or "").strip()
+                if restaurant_name:
+                    item_label = f"{item_label} ({restaurant_name})".strip()
+
+                price_label = ""
+                if price not in (None, ""):
+                    price_label = f"{price} {currency or ''}".strip()
+
+                avail_label = ""
+                if available not in (None, ""):
+                    avail_label = "Yes" if str(available).upper().startswith("Y") else "No"
+
+                image_cell = ""
+                if image_url not in (None, ""):
+                    u = str(image_url).strip()
+                    image_cell = f"[view]({u})"
+
+                table_rows.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            item_label.replace("|", "\\|"),
+                            str(category or "").replace("|", "\\|"),
+                            price_label.replace("|", "\\|"),
+                            avail_label.replace("|", "\\|"),
+                            image_cell.replace("|", "\\|"),
+                        ]
+                    )
+                    + " |"
+                )
+
+                if description not in (None, "") and item_name not in (None, ""):
+                    desc_block = f"- **{str(item_name).strip()}**: {str(description).strip()}"
+                    if image_url not in (None, ""):
+                        desc_block += f"\n\n  {_md_image(image_url, str(item_name).strip()).rstrip()}"
+                    descriptions.append(desc_block)
+
+            lines.append(header)
+            lines.append(sep)
+            lines.extend(table_rows)
+
+            if descriptions:
+                lines.append("")
+                lines.append("Descriptions:")
+                lines.extend(descriptions)
+
+            return "\n".join(lines).strip()
+
         for row in rows:
             restaurant_name = _get(row, "restaurant_name") or _get(row, "name")
             item_name = _get(row, "item_name")
