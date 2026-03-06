@@ -10,6 +10,7 @@ from database.connections import (
     claim_next_knowledge_job,
     ensure_knowledge_tables,
     finish_knowledge_job,
+    get_knowledge_job,
     update_knowledge_job,
 )
 from core.gen_ai_provider import GenAIEmbedProvider
@@ -44,10 +45,44 @@ async def run_knowledge_worker(stop_event: asyncio.Event, poll_seconds: float = 
             logger.info(f"Claimed job #{job_id} with {len(files)} file(s)")
 
             if not files:
-                logger.warning(f"Job #{job_id} has no files, marking complete")
-                with db.get_connection() as conn:
-                    finish_knowledge_job(conn, db.table_prefix, job_id, ok=True, message="no files")
-                continue
+                # Race-condition guard: uploads create the job first, then link files.
+                # The worker can claim the job in between those steps.
+                logger.warning(
+                    f"Job #{job_id} has no files yet; waiting briefly for uploads to attach files"
+                )
+
+                max_wait_seconds = float(os.getenv("KNOWLEDGE_JOB_WAIT_FOR_FILES_SECONDS", "10"))
+                waited = 0.0
+                refreshed_files: list[dict] = []
+                while waited < max_wait_seconds and not stop_event.is_set():
+                    await asyncio.sleep(1.0)
+                    waited += 1.0
+                    try:
+                        with db.get_connection() as conn:
+                            ensure_knowledge_tables(conn, db.table_prefix)
+                            refreshed = get_knowledge_job(conn, db.table_prefix, job_id)
+                        if refreshed:
+                            refreshed_files = list(refreshed.get("files") or [])
+                            if refreshed_files:
+                                break
+                    except Exception as refresh_err:
+                        logger.debug("Job #%s refresh failed: %s", job_id, str(refresh_err))
+
+                if refreshed_files:
+                    files = refreshed_files
+                    logger.info(f"Job #{job_id} now has {len(files)} file(s) after waiting")
+                else:
+                    # If files still aren't attached, release back to queue so the uploader can finish.
+                    with db.get_connection() as conn:
+                        update_knowledge_job(
+                            conn,
+                            db.table_prefix,
+                            job_id,
+                            status="queued",
+                            message="waiting for files to be attached",
+                        )
+                    await asyncio.sleep(poll_seconds)
+                    continue
 
             with db.get_connection() as conn:
                 update_knowledge_job(conn, db.table_prefix, job_id, progress_pct=1, message=f"batch started ({len(files)} file(s))")

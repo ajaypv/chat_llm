@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi import UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from uuid import uuid4
 from starlette.responses import StreamingResponse
 
 from chat_app.main_llm import OCIOutageEnergyLLM
@@ -85,40 +86,92 @@ def build_app() -> FastAPI:
         if not query:
             return {"error": "query is required"}
 
+        request_id = payload.get("request_id") or str(uuid4())
+
         categories = payload.get("categories")
         if categories is None:
             categories_list: list[str] = []
         elif isinstance(categories, list):
-            categories_list = [str(c).strip() for c in categories if str(c).strip()]
+            categories_list = [
+                str(c).strip().lower() for c in categories if str(c).strip()
+            ]
         else:
-            categories_list = [str(categories).strip()] if str(categories).strip() else []
+            categories_list = [str(categories).strip().lower()] if str(categories).strip() else []
 
         session_id = payload.get("session_id") or "local"
+        top_k = int(payload.get("top_k") or 10)
+
+        logger.info(
+            "[rid=%s] /chat: session_id=%s query_len=%s top_k=%s categories=%s",
+            request_id,
+            session_id,
+            len(query),
+            top_k,
+            categories_list,
+        )
 
         # Always run RAG retrieval server-side so the experience doesn't depend on
         # whether the model decides to invoke tools.
         rag_context: str = ""
+        rag_debug_updates: list[str] = []
         try:
             from chat_app.rag_tool import semantic_search_raw
 
+            # Emit a tool-like status line so the frontend can render it in the Tool UI.
+            rag_debug_updates.append(
+                "Model calling tool: semantic_search with args "
+                + str({"query": query, "top_k": top_k, "categories": categories_list})
+            )
+
             rag_context = await semantic_search_raw(
                 query=query,
-                top_k=int(payload.get("top_k") or 3),
+                top_k=top_k,
                 categories=categories_list,
+                request_id=request_id,
+            )
+
+            rag_debug_updates.append(
+                "Tool semantic_search responded with:\n" + str(rag_context)
             )
         except Exception as e:
-            logger.warning("semantic_search failed: %s", str(e))
+            logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
+
+        logger.info(
+            "[rid=%s] /chat: rag_context_present=%s",
+            request_id,
+            bool(rag_context and "No relevant documents found" not in rag_context),
+        )
 
         async def gen():
             import json
+
+            # Send RAG tool-call/result updates first so the UI shows them
+            # even if the LLM stream is slow.
+            for u in rag_debug_updates:
+                yield json.dumps({"updates": u}) + "\n"
+
             # Stream chunks as NDJSON so the frontend can update incrementally.
             augmented = query
+            selected_cats = categories_list
             if rag_context:
                 augmented = (
-                    "Use the following retrieved knowledge context when helpful. "
-                    "If it is irrelevant, ignore it.\n\n"
-                    f"Retrieved context:\n{rag_context}\n\n"
-                    f"User question:\n{query}"
+                    "You are answering a user question using retrieved knowledge snippets.\n"
+                    "Follow these rules:\n"
+                    "- Treat the retrieved context as the primary source of truth.\n"
+                    "- If Selected knowledge categories is non-empty, only rely on information that fits those categories.\n"
+                    "- Do not say 'no relevant context found' because context IS provided below.\n"
+                    "- If the context does not contain the answer, say what is missing and ask a brief clarifying question.\n\n"
+                    f"Selected knowledge categories: {selected_cats if selected_cats else '[]'}\n\n"
+                    f"Retrieved context (each snippet includes a Source):\n{rag_context}\n\n"
+                    f"User question:\n{query}\n\n"
+                    "Answer:\n"
+                )
+            else:
+                augmented = (
+                    "No retrieved knowledge context was found for this query.\n"
+                    f"Selected knowledge categories: {selected_cats if selected_cats else '[]'}\n\n"
+                    f"User question:\n{query}\n\n"
+                    "Answer using general knowledge if appropriate, and clearly state that no retrieved context was available.\n"
                 )
 
             async for chunk in llm.oci_stream(augmented, session_id=session_id, categories=categories_list):

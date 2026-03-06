@@ -1,4 +1,6 @@
 import array
+import logging
+import os
 from langchain.tools import tool
 
 from core.gen_ai_provider import GenAIEmbedProvider
@@ -6,6 +8,8 @@ from database.connections import RAGDBConnection
 
 from dotenv import load_dotenv
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 def build_context_snippet(results: list[dict]) -> str:
     """Format retrieved chunks for prompt context."""
@@ -25,7 +29,12 @@ def build_context_snippet(results: list[dict]) -> str:
     return "\n\n".join(context_parts)
 
 
-async def semantic_search_raw(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
+async def semantic_search_raw(
+    query: str,
+    top_k: int = 10,
+    categories: list[str] | None = None,
+    request_id: str | None = None,
+) -> str:
     """Plain async function for semantic retrieval (callable from API code).
 
     The @tool-wrapped variant below delegates to this.
@@ -34,35 +43,75 @@ async def semantic_search_raw(query: str, top_k: int = 3, categories: list[str] 
     db_conn = RAGDBConnection()
 
     try:
+        rid = request_id or "-"
+        cat_list = [str(c).strip() for c in (categories or []) if str(c).strip()]
+        logger.info(
+            "[rid=%s] semantic_search_raw: query_len=%s top_k=%s categories=%s prefix=%s",
+            rid,
+            len(query or ""),
+            int(top_k),
+            cat_list,
+            db_conn.table_prefix,
+        )
+
         query_response = embed_provider.embed_client.embed_query(query)
         query_vec = array.array("f", query_response)
+        logger.info("[rid=%s] semantic_search_raw: embedded query vector_len=%s", rid, len(query_vec))
 
         with db_conn.get_connection() as connection:
             cursor = connection.cursor()
 
-            cat_list = [str(c).strip() for c in (categories or []) if str(c).strip()]
             if cat_list:
-                binds: list[object] = [query_vec]
-                placeholders = ",".join([f":{i+2}" for i in range(len(cat_list))])
-                binds.extend(cat_list)
+                # Normalize embedding source paths to match knowledge_file.storage_path.
+                # `base_root` is the on-disk knowledge folder as a forward-slash prefix.
+                base_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "knowledge"))
+                base_root = base_root.replace("\\", "/").rstrip("/") + "/"
+
+                bind = {"query_vec": query_vec, "base_root": base_root}
+                cat_binds = []
+                for i, cat in enumerate(cat_list):
+                    k = f"cat{i}"
+                    bind[k] = cat
+                    cat_binds.append(f":{k}")
+                placeholders = ",".join(cat_binds)
+                logger.info(
+                    "[rid=%s] semantic_search_raw: executing category-filtered SQL (cats=%s)",
+                    rid,
+                    cat_list,
+                )
                 cursor.execute(
                     f"""
                     SELECT e.text,
-                           vector_distance(e.embedding_vector, :1, COSINE) AS distance,
+                           vector_distance(e.embedding_vector, :query_vec, COSINE) AS distance,
                            e.source
                     FROM {db_conn.table_prefix}_embedding e
                     WHERE EXISTS (
                         SELECT 1
                         FROM {db_conn.table_prefix}_knowledge_file f
-                        WHERE f.storage_path = e.source
+                                                WHERE (
+                                                    -- embeddings currently store absolute Windows paths, while knowledge_file.storage_path
+                                                    -- stores a relative path like "deployment/file.pdf".
+                                                    -- Also, some sources include a chunk suffix like "...pdf_start_0".
+                                                    f.storage_path = REPLACE(REPLACE(e.source, '\\', '/'), :base_root, '')
+                                                    OR (
+                                                        REPLACE(REPLACE(e.source, '\\', '/'), :base_root, '') LIKE f.storage_path || '%'
+                                                    )
+                                                    OR (
+                                                        -- Fallback: match by just the filename (handles absolute paths).
+                                                        SUBSTR(REPLACE(REPLACE(e.source, '\\', '/'), :base_root, ''),
+                                                                     INSTR(REPLACE(REPLACE(e.source, '\\', '/'), :base_root, ''), '/', -1) + 1
+                                                        ) = SUBSTR(f.storage_path, INSTR(f.storage_path, '/', -1) + 1)
+                                                    )
+                                                )
                           AND f.category IN ({placeholders})
                     )
                     ORDER BY distance
                     FETCH FIRST {top_k} ROWS ONLY
                     """,
-                    binds,
+                                        bind,
                 )
             else:
+                logger.info("[rid=%s] semantic_search_raw: executing unfiltered SQL", rid)
                 cursor.execute(
                     f"""
                     SELECT text, vector_distance(embedding_vector, :1, COSINE) AS distance, source
@@ -77,12 +126,25 @@ async def semantic_search_raw(query: str, top_k: int = 3, categories: list[str] 
             results = [{"text": r[0], "distance": r[1], "source": r[2]} for r in rows]
             cursor.close()
 
+        logger.info("[rid=%s] semantic_search_raw: hits=%s", rid, len(results))
+        if results:
+            preview = [
+                {
+                    "source": str(r.get("source")),
+                    "distance": None if r.get("distance") is None else float(r.get("distance")),
+                }
+                for r in results[: min(5, len(results))]
+            ]
+            logger.info("[rid=%s] semantic_search_raw: top_hits=%s", rid, preview)
+
         return build_context_snippet(results)
-    except Exception as e:
-        return f"Error performing semantic search: {str(e)}"
+    except Exception:
+        rid = request_id or "-"
+        logger.exception("[rid=%s] semantic_search_raw failed", rid)
+        return "Error performing semantic search."
 
 @tool()
-async def semantic_search(query: str, top_k: int = 3, categories: list[str] | None = None) -> str:
+async def semantic_search(query: str, top_k: int = 10, categories: list[str] | None = None) -> str:
     """Perform semantic search with cosine similarity to find relevant documents:
     [epa_actions_for_outages (US), fema_outage_flyer (US), general_disaster_manual (MEX)]
     """
