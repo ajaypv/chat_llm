@@ -105,7 +105,7 @@ def main():
                     if data_scale is None:
                         length_part = "({})".format(int(data_precision))
                     else:
-                        length_part = "({},{})".format(int(data_precision), int(data_scale)))
+                        length_part = "({},{})".format(int(data_precision), int(data_scale))
 
                 null_part = "NULL" if _yn(nullable) == "Y" else "NOT NULL"
                 print(
