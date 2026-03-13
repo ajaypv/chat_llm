@@ -25,7 +25,7 @@ const getMotionComponent = (element: keyof JSX.IntrinsicElements) => {
 };
 
 export interface TextShimmerProps {
-  children: string;
+  children?: string;
   as?: ElementType;
   className?: string;
   duration?: number;
@@ -39,14 +39,13 @@ const ShimmerComponent = ({
   duration = 2,
   spread = 2,
 }: TextShimmerProps) => {
+  const text = children ?? " ";
+
   const MotionComponent = getMotionComponent(
     Component as keyof JSX.IntrinsicElements
   );
 
-  const dynamicSpread = useMemo(
-    () => (children?.length ?? 0) * spread,
-    [children, spread]
-  );
+  const dynamicSpread = useMemo(() => text.length * spread, [text, spread]);
 
   return (
     <MotionComponent
@@ -70,7 +69,7 @@ const ShimmerComponent = ({
         repeat: Number.POSITIVE_INFINITY,
       }}
     >
-      {children}
+      {text}
     </MotionComponent>
   );
 };
