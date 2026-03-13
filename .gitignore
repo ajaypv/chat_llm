@@ -38,6 +38,16 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# database wallets / credentials
+/database/Wallet_InnLabDatalakeDB/
+/database/Wallet_InnLabDatalakeDB.zip
+*.jks
+*.p12
+*.sso
+*tnsnames.ora
+*sqlnet.ora
+*ojdbc.properties
+
 # vercel
 .vercel
 
