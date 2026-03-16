@@ -115,18 +115,7 @@ interface MessageType {
   }[];
 }
 
-const initialMessages: MessageType[] = [
-  {
-    from: "assistant",
-    key: nanoid(),
-    versions: [
-      {
-        content: "Ask a question to start chatting.",
-        id: nanoid(),
-      },
-    ],
-  },
-];
+const initialMessages: MessageType[] = [];
 
 const models = [
   {
@@ -167,6 +156,13 @@ const models = [
 ];
 
 const suggestions: string[] = [];
+
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good Morning";
+  if (hour < 18) return "Good Afternoon";
+  return "Good Evening";
+}
 
 type ChatStreamChunk = {
   type?: "delta" | "status" | "final";
@@ -689,6 +685,8 @@ const Example = () => {
     [text, status]
   );
 
+  const welcomeGreeting = useMemo(() => getTimeGreeting(), []);
+
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
       <header className="shrink-0 border-b border-red-200/70 bg-white/80 px-3 py-2 backdrop-blur">
@@ -743,6 +741,18 @@ const Example = () => {
         <div className="mx-auto w-full max-w-5xl px-3 sm:px-4">
         <Conversation>
           <ConversationContent>
+          {messages.length === 0 ? (
+            <div className="grid min-h-[52vh] place-items-center px-2">
+              <div className="w-full max-w-2xl py-8 text-center">
+                <h1 className="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
+                  {welcomeGreeting} <span className="inline-block animate-pulse">👋</span>
+                </h1>
+                <p className="mt-3 text-base text-slate-600 sm:text-lg">
+                  Ready when you are — ask me anything.
+                </p>
+              </div>
+            </div>
+          ) : null}
           {messages.map(({ versions, ...message }) => (
             <MessageBranch defaultBranch={0} key={message.key}>
               <MessageBranchContent>
