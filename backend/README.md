@@ -15,7 +15,7 @@ This backend is started via `__main__.py`:
 
 ```powershell
 cd chat_llm/backend
-.\.venv\Scripts\python.exe .\__main__.py --host 0.0.0.0 --port 8000
+uv run --project . python .\__main__.py --host 0.0.0.0 --port 8000
 ```
 
 Health check:

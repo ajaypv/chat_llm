@@ -16,7 +16,7 @@ from a2a.utils import (
     new_task,
 )
 from a2a.utils.errors import ServerError
-from chat_app.main_llm import OCIOutageEnergyLLM
+from chat_app.main_llm import KnowledgeAssistantAgent
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ class OutageEnergyLLMExecutor(AgentExecutor):
     """Outage and Energy LLM executor Example."""
 
     def __init__(self):
-        self.oci_ui_agent = OCIOutageEnergyLLM()
-        self.oci_text_agent = OCIOutageEnergyLLM()
+        self.oci_ui_agent = KnowledgeAssistantAgent()
+        self.oci_text_agent = KnowledgeAssistantAgent()
 
     async def execute(
         self,

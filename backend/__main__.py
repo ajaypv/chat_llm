@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 from starlette.responses import StreamingResponse
 
-from chat_app.main_llm import OCIOutageEnergyLLM
+from chat_app.main_llm import KnowledgeAssistantAgent
 from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
 
@@ -73,7 +73,7 @@ def build_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    llm = OCIOutageEnergyLLM()
+    llm = KnowledgeAssistantAgent()
 
     @app.get("/health")
     async def health():
@@ -126,18 +126,27 @@ def build_app() -> FastAPI:
             "menu items",
             "dish",
             "dishes",
-            "food item",
-            "food items",
+            "cuisine",
+            "cuisines",
+        )
+        restaurant_entity_keywords = (
+            "sunrise bistro",
+            "spice route kitchen",
+            "san francisco",
+            "los angeles",
+            "new york",
+        )
+        restaurant_attribute_keywords = (
             "price",
             "available",
             "location",
             "address",
             "city",
-            "san francisco",
-            "los angeles",
-            "new york",
         )
-        use_nl2sql = any(k in q_lower for k in restaurant_keywords)
+        use_nl2sql = any(k in q_lower for k in restaurant_keywords) or (
+            any(k in q_lower for k in restaurant_attribute_keywords)
+            and any(k in q_lower for k in restaurant_entity_keywords)
+        )
 
         if use_nl2sql:
             try:
@@ -155,20 +164,6 @@ def build_app() -> FastAPI:
             except Exception as e:
                 logger.warning("[rid=%s] nl2sql_tool failed: %s", request_id, str(e))
                 nl2sql_result = ""
-
-        # If NL2SQL was selected, return DB results directly (markdown), without
-        # running semantic search or streaming a separate LLM answer.
-        if use_nl2sql and nl2sql_result:
-            async def gen_nl2sql_only():
-                import json
-
-                for u in rag_debug_updates:
-                    yield json.dumps({"updates": u}) + "\n"
-
-                # Return markdown directly as the assistant response.
-                yield json.dumps({"delta": str(nl2sql_result)}) + "\n"
-
-            return StreamingResponse(gen_nl2sql_only(), media_type="application/x-ndjson")
 
         try:
             from chat_app.rag_tool import semantic_search_raw
@@ -193,6 +188,9 @@ def build_app() -> FastAPI:
         except Exception as e:
             logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
 
+        if use_nl2sql and nl2sql_result:
+            rag_context = ""
+
         logger.info(
             "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
             request_id,
@@ -216,7 +214,15 @@ def build_app() -> FastAPI:
                 augmented = (
                     "You are answering a user question using database query results.\n"
                     "Use the results below as the source of truth.\n"
-                    "If the results are empty, say no matching records were found.\n\n"
+                    "Respond in clear markdown.\n"
+                    "Start with a short direct answer to the user's question.\n"
+                    "When the question asks for menu items, restaurants, comparisons, or 'both restaurants', include a markdown table.\n"
+                    "For menu-style questions, prefer a table with columns like: Restaurant | Item | Category | Price | Available.\n"
+                    "If the tool result already contains a markdown table, preserve/use that table and add a short summary below it.\n"
+                    "Then provide a concise explanation of what the results mean.\n"
+                    "If useful, summarize the best matches as bullet points.\n"
+                    "If the results are empty, say no matching records were found.\n"
+                    "Do not dump raw tool output without explanation.\n\n"
                     f"Database results:\n{nl2sql_result}\n\n"
                     f"User question:\n{query}\n\n"
                     "Answer:\n"

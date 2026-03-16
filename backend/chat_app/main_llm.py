@@ -19,8 +19,8 @@ from chat_app.data_tools import get_outage_data, get_energy_data, get_industry_d
 
 logger = logging.getLogger(__name__)
 
-class OCIOutageEnergyLLM:
-    """ Agent using OCI libraries to provide outage and energy information """
+class KnowledgeAssistantAgent:
+    """General-purpose knowledge assistant backed by OCI GenAI and retrieval tools."""
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain", "text/event-stream"]
 
@@ -32,7 +32,7 @@ class OCIOutageEnergyLLM:
         self._active_categories: list[str] = []
 
     def _build_agent(self) -> CompiledStateGraph:
-        """Builds the LLM agent for the outage and energy agent."""
+        """Build the general-purpose assistant agent."""
         oci_llm = ChatOCIGenAI(
             model_id="xai.grok-4-fast-non-reasoning",
             service_endpoint=os.getenv("SERVICE_ENDPOINT"),
@@ -46,7 +46,7 @@ class OCIOutageEnergyLLM:
             # tools=[get_outage_data, get_energy_data, get_industry_data],
             tools=[semantic_search, nl2sql_tool],
             system_prompt=MAIN_LLM_INSTRUCTIONS,
-            name="outage_energy_llm",
+            name="knowledge_assistant_agent",
             checkpointer= InMemorySaver()
         )
     
@@ -135,3 +135,7 @@ class OCIOutageEnergyLLM:
             "token_count": str(model_token_count),
             "suggestions": suggestions.model_dump_json()
         }
+
+
+# Backward-compatible alias for existing imports.
+OCIOutageEnergyLLM = KnowledgeAssistantAgent

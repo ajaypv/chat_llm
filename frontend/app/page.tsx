@@ -772,7 +772,7 @@ const Example = () => {
                         </Reasoning>
                       )}
                       <MessageContent>
-                        <div className="prose prose-slate max-w-none prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-950 prose-pre:text-slate-50 prose-code:text-[#C74634] prose-img:my-2 prose-img:max-w-full prose-img:rounded-lg prose-img:object-cover prose-img:h-56 prose-img:w-full sm:prose-img:h-64">
+                        <div className="prose prose-slate max-w-none prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-950 prose-pre:text-slate-50 prose-code:text-[#C74634] prose-img:my-3 prose-img:block prose-img:max-w-full prose-img:rounded-xl prose-img:border prose-img:border-slate-200 prose-img:bg-slate-50 prose-img:object-contain prose-img:w-auto prose-img:h-auto prose-img:max-h-32 sm:prose-img:max-h-36 lg:prose-img:max-h-40 prose-img:mx-0 prose-img:max-w-xs sm:prose-img:max-w-sm lg:prose-img:max-w-md">
                           <MessageResponse>{version.content}</MessageResponse>
                         </div>
                       </MessageContent>

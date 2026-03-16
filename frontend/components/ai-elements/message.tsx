@@ -20,6 +20,7 @@ import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import Image from "next/image";
 import {
   createContext,
   memo,
@@ -331,6 +332,28 @@ export const MessageResponse = memo(
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
+      components={{
+        // Use Next.js Image with fixed medium sizing to keep assistant images
+        // compact/left-aligned across varying source dimensions.
+        img: ({ className: imgClassName, alt, src }) => {
+          const srcValue = typeof src === "string" ? src : "";
+          if (!srcValue) return null;
+
+          return (
+            <Image
+              src={srcValue}
+              alt={alt ?? ""}
+              width={520}
+              height={320}
+              unoptimized
+              className={cn(
+                "my-3 h-auto max-h-52 w-full max-w-lg rounded-xl border border-slate-200 bg-slate-50 object-contain",
+                imgClassName
+              )}
+            />
+          );
+        },
+      }}
       plugins={streamdownPlugins}
       {...props}
     />
