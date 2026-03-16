@@ -84,6 +84,14 @@ import {
   SourcesTrigger,
 } from "@/components/ai-elements/sources";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import {
+  InlineCitation,
+  InlineCitationCard,
+  InlineCitationCardBody,
+  InlineCitationCardTrigger,
+  InlineCitationSource,
+  InlineCitationText,
+} from "@/components/ai-elements/inline-citation";
 import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, LibraryIcon, MicIcon, MicOffIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -262,6 +270,12 @@ const extractSourcesFromRagResult = (raw: string): SourceRef[] => {
     match = re.exec(text);
   }
   return out;
+};
+
+const toCitationUrl = (source: string): string => {
+  const s = String(source || "").trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://source.local/${encodeURIComponent(s)}`;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
@@ -897,6 +911,33 @@ const Example = () => {
                       <MessageContent>
                         <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-3 prose-p:text-slate-800 prose-headings:scroll-m-20 prose-headings:font-semibold prose-headings:text-slate-900 prose-strong:text-slate-900 prose-li:my-1 prose-li:marker:text-slate-400 prose-a:text-[#C74634] prose-a:no-underline hover:prose-a:underline prose-table:block prose-table:w-full prose-table:overflow-x-auto prose-th:border prose-th:border-slate-200 prose-th:bg-slate-50 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-th:uppercase prose-th:tracking-wide prose-td:border prose-td:border-slate-200 prose-td:px-3 prose-td:py-2 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-950 prose-pre:text-slate-50 prose-code:text-[#C74634] prose-img:my-3 prose-img:block prose-img:max-w-full prose-img:rounded-xl prose-img:border prose-img:border-slate-200 prose-img:bg-slate-50 prose-img:object-contain prose-img:w-auto prose-img:h-auto prose-img:max-h-32 sm:prose-img:max-h-36 lg:prose-img:max-h-40 prose-img:mx-0 prose-img:max-w-xs sm:prose-img:max-w-sm lg:prose-img:max-w-md">
                           <MessageResponse>{version.content}</MessageResponse>
+                          {message.sources?.length ? (
+                            <div className="mt-3 not-prose flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                              <span className="font-semibold">Citations:</span>
+                              {message.sources.map((source, idx) => (
+                                <InlineCitation key={`${source.href}-${idx}`}>
+                                  <InlineCitationCard>
+                                    <InlineCitationCardTrigger sources={[toCitationUrl(source.href)]}>
+                                      [{idx + 1}]
+                                    </InlineCitationCardTrigger>
+                                    <InlineCitationCardBody>
+                                      <div className="p-3">
+                                        <InlineCitationText className="font-semibold text-sm text-slate-900">
+                                          Source [{idx + 1}]
+                                        </InlineCitationText>
+                                        <InlineCitationSource
+                                          className="mt-2"
+                                          title={source.title}
+                                          url={source.href}
+                                          description="Retrieved from the RAG knowledge context used for this answer."
+                                        />
+                                      </div>
+                                    </InlineCitationCardBody>
+                                  </InlineCitationCard>
+                                </InlineCitation>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       </MessageContent>
                       {message.tools?.length ? (
