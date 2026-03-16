@@ -692,6 +692,7 @@ const Example = () => {
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
       <header className="shrink-0 border-b border-red-200/70 bg-white/80 px-3 py-2 backdrop-blur">
+        <div className="mx-auto w-full max-w-5xl">
         <div className="flex items-center gap-2">
           <PromptInputButton
             aria-label="Open menu"
@@ -735,9 +736,11 @@ const Example = () => {
             </nav>
           </div>
         ) : null}
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-5xl px-3 sm:px-4">
         <Conversation>
           <ConversationContent>
           {messages.map(({ versions, ...message }) => (
@@ -809,9 +812,11 @@ const Example = () => {
         </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
+        </div>
       </div>
 
-      <div className="grid shrink-0 gap-4 border-t border-red-200/70 bg-white/80 px-4 pb-4 pt-4 backdrop-blur">
+      <div className="grid shrink-0 gap-2 px-3 pb-3 pt-2 sm:px-4">
+        <div className="mx-auto w-full max-w-3xl">
         <Suggestions className="px-0">
           {(followups.length ? followups : suggestions).map((suggestion) => (
             <SuggestionItem
@@ -822,76 +827,13 @@ const Example = () => {
           ))}
         </Suggestions>
 
-        <div className="w-full rounded-3xl border border-red-200/70 bg-gradient-to-b from-white to-red-50/40 p-3 shadow-sm">
+        <div className="w-full rounded-2xl border border-slate-200/80 bg-transparent p-1.5 shadow-md shadow-black/5 backdrop-blur-sm">
           <PromptInput globalDrop multiple onSubmit={handleSubmit}>
             <PromptInputHeader>
               <PromptInputAttachmentsDisplay />
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <CategorySelector
-                  open={categorySelectorOpen}
-                  onOpenChange={setCategorySelectorOpen}
-                >
-                  <CategorySelectorTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-2"
-                    >
-                      <BrainIcon size={16} />
-                      <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
-                      {selectedCategories.length > 0 ? (
-                        <Badge variant="secondary">{selectedCategories.length}</Badge>
-                      ) : null}
-                    </Button>
-                  </CategorySelectorTrigger>
-
-                  <CategorySelectorContent title="Knowledge Categories">
-                    <CategorySelectorInput placeholder="Search categories..." />
-                    <CategorySelectorList>
-                      <CategorySelectorEmpty>No categories found.</CategorySelectorEmpty>
-                      <CategorySelectorGroup heading="Knowledge">
-                        <CategorySelectorItem
-                          onSelect={() => {
-                            clearCategories();
-                            setCategorySelectorOpen(false);
-                          }}
-                          value="__all__"
-                        >
-                          <span className="mr-2 inline-flex size-4 items-center justify-center">
-                            {selectedCategories.length === 0 ? (
-                              <CheckIcon className="size-4" />
-                            ) : null}
-                          </span>
-                          All categories
-                        </CategorySelectorItem>
-                        {availableCategories.map((cat) => {
-                          const active = selectedCategories.includes(cat);
-                          return (
-                            <CategorySelectorItem
-                              key={cat}
-                              onSelect={() => toggleCategory(cat)}
-                              value={cat}
-                            >
-                              <span className="mr-2 inline-flex size-4 items-center justify-center">
-                                {active ? <CheckIcon className="size-4" /> : null}
-                              </span>
-                              {cat}
-                            </CategorySelectorItem>
-                          );
-                        })}
-                      </CategorySelectorGroup>
-                    </CategorySelectorList>
-                  </CategorySelectorContent>
-                </CategorySelector>
-
-                <span className="text-xs text-slate-500">
-                  If none selected, chat searches across all knowledge.
-                </span>
-              </div>
             </PromptInputHeader>
             <PromptInputBody>
-              <PromptInputTextarea onChange={handleTextChange} value={text} />
+              <PromptInputTextarea className="min-h-9 max-h-28 overflow-y-auto py-1.5 text-sm leading-5" onChange={handleTextChange} value={text} />
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
@@ -954,10 +896,63 @@ const Example = () => {
                     </ModelSelectorList>
                   </ModelSelectorContent>
                 </ModelSelector>
+                <CategorySelector
+                  open={categorySelectorOpen}
+                  onOpenChange={setCategorySelectorOpen}
+                >
+                  <CategorySelectorTrigger asChild>
+                    <PromptInputButton className="border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50">
+                      <BrainIcon size={16} />
+                      <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
+                      {selectedCategories.length > 0 ? (
+                        <Badge variant="secondary">{selectedCategories.length}</Badge>
+                      ) : null}
+                    </PromptInputButton>
+                  </CategorySelectorTrigger>
+
+                  <CategorySelectorContent title="Knowledge Categories">
+                    <CategorySelectorInput placeholder="Search categories..." />
+                    <CategorySelectorList>
+                      <CategorySelectorEmpty>No categories found.</CategorySelectorEmpty>
+                      <CategorySelectorGroup heading="Knowledge">
+                        <CategorySelectorItem
+                          onSelect={() => {
+                            clearCategories();
+                            setCategorySelectorOpen(false);
+                          }}
+                          value="__all__"
+                        >
+                          <span className="mr-2 inline-flex size-4 items-center justify-center">
+                            {selectedCategories.length === 0 ? (
+                              <CheckIcon className="size-4" />
+                            ) : null}
+                          </span>
+                          All categories
+                        </CategorySelectorItem>
+                        {availableCategories.map((cat) => {
+                          const active = selectedCategories.includes(cat);
+                          return (
+                            <CategorySelectorItem
+                              key={cat}
+                              onSelect={() => toggleCategory(cat)}
+                              value={cat}
+                            >
+                              <span className="mr-2 inline-flex size-4 items-center justify-center">
+                                {active ? <CheckIcon className="size-4" /> : null}
+                              </span>
+                              {cat}
+                            </CategorySelectorItem>
+                          );
+                        })}
+                      </CategorySelectorGroup>
+                    </CategorySelectorList>
+                  </CategorySelectorContent>
+                </CategorySelector>
               </PromptInputTools>
               <PromptInputSubmit disabled={isSubmitDisabled} status={status} />
             </PromptInputFooter>
           </PromptInput>
+        </div>
         </div>
       </div>
     </div>
