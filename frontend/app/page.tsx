@@ -690,7 +690,7 @@ const Example = () => {
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
       <header className="shrink-0 border-b border-red-200/70 bg-white/80 px-3 py-2 backdrop-blur">
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <PromptInputButton
             aria-label="Open menu"
@@ -705,6 +705,13 @@ const Example = () => {
             <div className="text-sm font-semibold text-slate-900">LLM Chat</div>
           </div>
         </div>
+
+        <a
+          href="/rag"
+          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+        >
+          How this project works
+        </a>
 
         {navOpen ? (
           <div className="mt-2 rounded-2xl border border-red-200/70 bg-white shadow-sm">
