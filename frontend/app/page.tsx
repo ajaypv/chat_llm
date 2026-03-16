@@ -181,6 +181,8 @@ type ToolEvent = {
   errorText: string | undefined;
 };
 
+type SourceRef = { href: string; title: string };
+
 type SpeechRecognitionCtor = new () => {
   continuous: boolean;
   interimResults: boolean;
@@ -243,6 +245,23 @@ const parseBackendStatus = (
   }
 
   return { kind: "status", text };
+};
+
+const extractSourcesFromRagResult = (raw: string): SourceRef[] => {
+  const text = String(raw || "");
+  const re = /\(Source:\s*([^\)]+)\)/g;
+  const seen = new Set<string>();
+  const out: SourceRef[] = [];
+  let match: RegExpExecArray | null = re.exec(text);
+  while (match) {
+    const source = String(match[1] || "").trim();
+    if (source && !seen.has(source)) {
+      seen.add(source);
+      out.push({ href: source, title: source });
+    }
+    match = re.exec(text);
+  }
+  return out;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
@@ -484,6 +503,16 @@ const Example = () => {
     []
   );
 
+  const setMessageSources = useCallback((messageId: string, sources: SourceRef[]) => {
+    if (!sources.length) return;
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (!msg.versions.some((v) => v.id === messageId)) return msg;
+        return { ...msg, sources };
+      })
+    );
+  }, []);
+
   const streamResponse = useCallback(
     async (messageId: string, content: string) => {
       setStatus("streaming");
@@ -576,6 +605,11 @@ const Example = () => {
                   output: parsed.result,
                   errorText: undefined,
                 });
+
+                if (parsed.toolName === "semantic_search") {
+                  const sourceRefs = extractSourcesFromRagResult(parsed.result);
+                  setMessageSources(messageId, sourceRefs);
+                }
               } else {
                 // Generic status line: ignore (regular chat should stay clean).
                 if (parsed.kind !== "ignore") {
@@ -613,7 +647,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, selectedCategories, updateMessageContent]
+    [appendToolEvent, selectedCategories, setMessageSources, updateMessageContent]
   );
 
   const addUserMessage = useCallback(
