@@ -83,9 +83,8 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from "@/components/ai-elements/sources";
-import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
-import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, LibraryIcon } from "lucide-react";
+import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, LibraryIcon, MicIcon, MicOffIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -180,6 +179,18 @@ type ToolEvent = {
   input: Record<string, unknown>;
   output: string | undefined;
   errorText: string | undefined;
+};
+
+type SpeechRecognitionCtor = new () => {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives?: number;
+  onresult: ((event: any) => void) | null;
+  onerror: ((event: any) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
 };
 
 const parseBackendStatus = (
@@ -359,6 +370,10 @@ const Example = () => {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<InstanceType<SpeechRecognitionCtor> | null>(null);
+  const speechBaseTextRef = useRef<string>("");
+  const speechFinalTextRef = useRef<string>("");
 
   useEffect(() => {
     try {
@@ -654,9 +669,71 @@ const Example = () => {
     [addUserMessage]
   );
 
-  const handleTranscriptionChange = useCallback((transcript: string) => {
-    setText((prev) => (prev ? `${prev} ${transcript}` : transcript));
-  }, []);
+  const toggleSpeechToText = useCallback(() => {
+    const SpeechRecognition = (
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    ) as SpeechRecognitionCtor | undefined;
+
+    if (!SpeechRecognition) {
+      toast.error("Speech-to-text is not supported in this browser.");
+      return;
+    }
+
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+    recognition.maxAlternatives = 1;
+
+    speechBaseTextRef.current = text.trim();
+    speechFinalTextRef.current = "";
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = 0; i < event.results.length; i += 1) {
+        const chunk = String(event.results[i][0].transcript || "").trim();
+        if (!chunk) continue;
+        if (event.results[i].isFinal) {
+          speechFinalTextRef.current = `${speechFinalTextRef.current} ${chunk}`.trim();
+        } else {
+          interim = `${interim} ${chunk}`.trim();
+        }
+      }
+
+      const nextText = [
+        speechBaseTextRef.current,
+        speechFinalTextRef.current,
+        interim,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      setText(nextText);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      toast.error("Voice input failed. Please try again.");
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+      speechBaseTextRef.current = "";
+      speechFinalTextRef.current = "";
+    };
+
+    recognitionRef.current = recognition;
+    setIsListening(true);
+    recognition.start();
+  }, [isListening, text]);
 
   const handleTextChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -852,12 +929,14 @@ const Example = () => {
                     <PromptInputActionAddAttachments />
                   </PromptInputActionMenuContent>
                 </PromptInputActionMenu>
-                <SpeechInput
-                  className="shrink-0"
-                  onTranscriptionChange={handleTranscriptionChange}
-                  size="icon-sm"
-                  variant="ghost"
-                />
+                <PromptInputButton
+                  onClick={toggleSpeechToText}
+                  variant={isListening ? "default" : "ghost"}
+                  className={isListening ? "bg-[#C74634] hover:bg-[#B33C2D]" : ""}
+                >
+                  {isListening ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
+                  <span>{isListening ? "Stop" : "Voice"}</span>
+                </PromptInputButton>
                 <PromptInputButton
                   onClick={toggleWebSearch}
                   variant={useWebSearch ? "default" : "ghost"}
