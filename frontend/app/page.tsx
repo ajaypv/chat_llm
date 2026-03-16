@@ -827,7 +827,7 @@ const Example = () => {
           ))}
         </Suggestions>
 
-        <div className="w-full rounded-2xl border border-slate-200/80 bg-transparent p-1.5 shadow-md shadow-black/5 backdrop-blur-sm">
+        <div className="w-full rounded-2xl border border-slate-200/60 bg-transparent p-1.5 shadow-md shadow-black/5 backdrop-blur-sm [&_[data-slot=input-group]]:bg-transparent [&_[data-slot=input-group]]:border-slate-200/60 [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group]]:backdrop-blur-sm [&_[data-slot=input-group-addon]]:bg-transparent [&_[data-slot=input-group-control]]:bg-transparent [&_textarea]:bg-transparent [&_textarea]:!bg-transparent">
           <PromptInput globalDrop multiple onSubmit={handleSubmit}>
             <PromptInputHeader>
               <PromptInputAttachmentsDisplay />
@@ -864,7 +864,7 @@ const Example = () => {
                   open={modelSelectorOpen}
                 >
                   <ModelSelectorTrigger asChild>
-                    <PromptInputButton className="border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50">
+                    <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
                       {selectedModelData?.chefSlug && (
                         <ModelSelectorLogo provider={selectedModelData.chefSlug} />
                       )}
@@ -901,7 +901,7 @@ const Example = () => {
                   onOpenChange={setCategorySelectorOpen}
                 >
                   <CategorySelectorTrigger asChild>
-                    <PromptInputButton className="border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50">
+                    <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
                       <BrainIcon size={16} />
                       <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
                       {selectedCategories.length > 0 ? (
