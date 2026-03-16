@@ -85,7 +85,7 @@ import {
 } from "@/components/ai-elements/sources";
 import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
-import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, MessageCircleIcon, LibraryIcon } from "lucide-react";
+import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, LibraryIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -701,16 +701,8 @@ const Example = () => {
             <MenuIcon size={18} />
           </PromptInputButton>
 
-          <div className="flex items-center gap-2">
-            <div className="grid size-8 place-items-center rounded-xl bg-[#C74634]/10 text-[#C74634] ring-1 ring-[#C74634]/20">
-              <MessageCircleIcon className="size-4" />
-            </div>
-            <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Chat</div>
-              <div className="text-[11px] text-slate-500">
-                Oracle Redwood theme
-              </div>
-            </div>
+          <div className="leading-tight">
+            <div className="text-sm font-semibold text-slate-900">LLM Chat</div>
           </div>
         </div>
 
@@ -721,7 +713,7 @@ const Example = () => {
                 className="flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-slate-900 hover:bg-red-50"
                 href="/"
               >
-                <MessageCircleIcon className="size-4 text-[#C74634]" />
+                <MenuIcon className="size-4 text-[#C74634]" />
                 Chat
               </a>
               <a
@@ -785,7 +777,7 @@ const Example = () => {
                         </Reasoning>
                       )}
                       <MessageContent>
-                        <div className="prose prose-slate max-w-none prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-950 prose-pre:text-slate-50 prose-code:text-[#C74634] prose-img:my-3 prose-img:block prose-img:max-w-full prose-img:rounded-xl prose-img:border prose-img:border-slate-200 prose-img:bg-slate-50 prose-img:object-contain prose-img:w-auto prose-img:h-auto prose-img:max-h-32 sm:prose-img:max-h-36 lg:prose-img:max-h-40 prose-img:mx-0 prose-img:max-w-xs sm:prose-img:max-w-sm lg:prose-img:max-w-md">
+                        <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-3 prose-p:text-slate-800 prose-headings:scroll-m-20 prose-headings:font-semibold prose-headings:text-slate-900 prose-strong:text-slate-900 prose-li:my-1 prose-li:marker:text-slate-400 prose-a:text-[#C74634] prose-a:no-underline hover:prose-a:underline prose-table:block prose-table:w-full prose-table:overflow-x-auto prose-th:border prose-th:border-slate-200 prose-th:bg-slate-50 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-th:uppercase prose-th:tracking-wide prose-td:border prose-td:border-slate-200 prose-td:px-3 prose-td:py-2 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-200 prose-pre:bg-slate-950 prose-pre:text-slate-50 prose-code:text-[#C74634] prose-img:my-3 prose-img:block prose-img:max-w-full prose-img:rounded-xl prose-img:border prose-img:border-slate-200 prose-img:bg-slate-50 prose-img:object-contain prose-img:w-auto prose-img:h-auto prose-img:max-h-32 sm:prose-img:max-h-36 lg:prose-img:max-h-40 prose-img:mx-0 prose-img:max-w-xs sm:prose-img:max-w-sm lg:prose-img:max-w-md">
                           <MessageResponse>{version.content}</MessageResponse>
                         </div>
                       </MessageContent>
