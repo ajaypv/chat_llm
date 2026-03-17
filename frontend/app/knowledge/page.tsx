@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileUpIcon, UploadCloudIcon } from "lucide-react";
+import { FileUpIcon, Trash2Icon, UploadCloudIcon } from "lucide-react";
 
 export default function KnowledgePage() {
   const router = useRouter();
@@ -19,6 +19,37 @@ export default function KnowledgePage() {
     Record<number, { status: string; progress_pct: number; message?: string | null }>
   >({});
   const [batchJobId, setBatchJobId] = useState<number | null>(null);
+  const [existingCategories, setExistingCategories] = useState<
+    { category: string; count: number }[]
+  >([]);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false);
+  const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
+
+  const loadCategories = useCallback(async () => {
+    setIsLoadingCategories(true);
+    try {
+      const res = await fetch("http://localhost:8000/knowledge/list");
+      const json = await res.json();
+      setExistingCategories(
+        Array.isArray(json?.categories)
+          ? json.categories
+              .map((c: any) => ({
+                category: String(c?.category || ""),
+                count: Number(c?.count || 0),
+              }))
+              .filter((c: { category: string }) => c.category)
+          : []
+      );
+    } catch {
+      setExistingCategories([]);
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const onPickFiles = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -104,12 +135,42 @@ export default function KnowledgePage() {
       if (jobId) {
         router.push(`/knowledge/jobs/${jobId}`);
       }
+      await loadCategories();
     } catch (err: any) {
       setUploadError(err?.message ?? "Upload failed");
     } finally {
       setIsUploading(false);
     }
-  }, [category, files, router]);
+  }, [category, files, loadCategories, router]);
+
+  const onDeleteCategory = useCallback(async (cat: string) => {
+    const sure = window.confirm(
+      `Delete category '${cat}'? This removes uploaded files and related embeddings from DB.`
+    );
+    if (!sure) return;
+
+    setDeletingCategory(cat);
+    setUploadError(null);
+    setUploadSuccess(null);
+    try {
+      const res = await fetch(
+        `http://localhost:8000/knowledge/category/${encodeURIComponent(cat)}`,
+        { method: "DELETE" }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.detail || `Delete failed (${res.status})`);
+      }
+      setUploadSuccess(
+        `Deleted '${cat}' (embeddings: ${json?.deleted?.embedding_rows ?? 0}, files: ${json?.deleted?.knowledge_files ?? 0}).`
+      );
+      await loadCategories();
+    } catch (err: any) {
+      setUploadError(err?.message ?? "Failed to delete category");
+    } finally {
+      setDeletingCategory(null);
+    }
+  }, [loadCategories]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
@@ -293,6 +354,45 @@ export default function KnowledgePage() {
               <div className="mt-4 text-xs text-slate-500">
                 No PDFs selected.
               </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <div className="text-sm font-semibold text-slate-900">Manage categories</div>
+            <div className="mt-1 text-xs text-slate-500">
+              Delete a category to remove uploaded PDFs and corresponding embeddings from database.
+            </div>
+          </div>
+          <div className="p-5">
+            {isLoadingCategories ? (
+              <div className="text-xs text-slate-500">Loading categories...</div>
+            ) : existingCategories.length === 0 ? (
+              <div className="text-xs text-slate-500">No categories found.</div>
+            ) : (
+              <ul className="space-y-2">
+                {existingCategories.map((c) => (
+                  <li
+                    key={c.category}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{c.category}</div>
+                      <div className="text-xs text-slate-500">{c.count} PDF file(s)</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteCategory(c.category)}
+                      disabled={deletingCategory === c.category}
+                      className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      {deletingCategory === c.category ? "Deleting..." : "Delete"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>

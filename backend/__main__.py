@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shutil
 from pathlib import Path
 import asyncio
 
@@ -404,6 +405,90 @@ def build_app() -> FastAPI:
             root.mkdir(parents=True, exist_ok=True)
             cats = [p.name for p in sorted([p for p in root.iterdir() if p.is_dir()])]
             return {"categories": cats}
+
+    @app.delete("/knowledge/category/{category}")
+    async def knowledge_delete_category(category: str):
+        """Delete a knowledge category from filesystem + DB (knowledge_file and embeddings)."""
+        cat = _safe_category(category)
+        cat_dir = (upload_root / cat).resolve()
+
+        db = RAGDBConnection()
+        deleted_embeddings = 0
+        deleted_files = 0
+        deleted_job_links = 0
+
+        try:
+            with db.get_connection() as conn:
+                ensure_knowledge_tables(conn, db.table_prefix)
+                with conn.cursor() as cur:
+                    # Delete embedding rows that map to files in this category.
+                    cur.execute(
+                        f"""
+                        DELETE FROM {db.table_prefix}_embedding e
+                        WHERE EXISTS (
+                          SELECT 1
+                          FROM {db.table_prefix}_knowledge_file f
+                          WHERE f.category = :cat
+                            AND (
+                              REPLACE(REPLACE(e.source, '\\', '/'), :base_root, '') = f.storage_path
+                              OR REPLACE(e.source, '\\', '/') = REPLACE(:abs_prefix || f.storage_path, '\\', '/')
+                              OR REPLACE(e.source, '\\', '/') = REPLACE(f.storage_path, '\\', '/')
+                            )
+                        )
+                        """,
+                        {
+                            "cat": cat,
+                            "base_root": str(upload_root.resolve()).replace("\\", "/") + "/",
+                            "abs_prefix": str(upload_root.resolve()).replace("\\", "/") + "/",
+                        },
+                    )
+                    deleted_embeddings = int(cur.rowcount or 0)
+
+                    # Delete job-file links for this category's files.
+                    cur.execute(
+                        f"""
+                        DELETE FROM {db.table_prefix}_knowledge_job_file jf
+                        WHERE EXISTS (
+                          SELECT 1
+                          FROM {db.table_prefix}_knowledge_file f
+                          WHERE f.id = jf.file_id
+                            AND f.category = :cat
+                        )
+                        """,
+                        {"cat": cat},
+                    )
+                    deleted_job_links = int(cur.rowcount or 0)
+
+                    # Delete file records for this category.
+                    cur.execute(
+                        f"DELETE FROM {db.table_prefix}_knowledge_file WHERE category = :cat",
+                        {"cat": cat},
+                    )
+                    deleted_files = int(cur.rowcount or 0)
+
+                conn.commit()
+        except Exception as e:
+            logger.exception("Failed deleting category from DB: %s", str(e))
+            raise HTTPException(status_code=500, detail="failed to delete category from database")
+
+        deleted_fs = False
+        try:
+            if cat_dir.exists() and cat_dir.is_dir():
+                shutil.rmtree(cat_dir)
+                deleted_fs = True
+        except Exception as e:
+            logger.warning("Failed deleting category folder '%s': %s", cat, str(e))
+
+        return {
+            "ok": True,
+            "category": cat,
+            "deleted": {
+                "embedding_rows": deleted_embeddings,
+                "knowledge_files": deleted_files,
+                "job_file_links": deleted_job_links,
+                "filesystem_folder_removed": deleted_fs,
+            },
+        }
 
     async def _chat_stream(query: str, session_id: str):
         async def gen():

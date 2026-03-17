@@ -92,7 +92,18 @@ import {
   InlineCitationSource,
   InlineCitationText,
 } from "@/components/ai-elements/inline-citation";
-import { BrainIcon, CheckIcon, GlobeIcon, MenuIcon, LibraryIcon, MicIcon, MicOffIcon } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import {
+  BrainIcon,
+  CheckIcon,
+  GlobeIcon,
+  LibraryIcon,
+  MenuIcon,
+  MicIcon,
+  MicOffIcon,
+  PanelLeftCloseIcon,
+  SparklesIcon,
+} from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -290,6 +301,27 @@ const delay = (ms: number): Promise<void> =>
 
 const chefs = ["OpenAI", "Anthropic", "Google"];
 
+const primaryNavItems = [
+  {
+    description: "Main chat workspace",
+    href: "/",
+    icon: MenuIcon,
+    label: "Chat",
+  },
+  {
+    description: "Upload and manage knowledge",
+    href: "/knowledge",
+    icon: LibraryIcon,
+    label: "Knowledge",
+  },
+  {
+    description: "See retrieval flow and project details",
+    href: "/rag",
+    icon: SparklesIcon,
+    label: "How it works",
+  },
+];
+
 const AttachmentItem = ({
   attachment,
   onRemove,
@@ -399,6 +431,23 @@ const Example = () => {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    if (!navOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNavOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [navOpen]);
 
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -798,6 +847,10 @@ const Example = () => {
     setNavOpen((v) => !v);
   }, []);
 
+  const closeNav = useCallback(() => {
+    setNavOpen(false);
+  }, []);
+
   const handleModelSelect = useCallback((modelId: string) => {
     setModel(modelId);
     setModelSelectorOpen(false);
@@ -814,50 +867,121 @@ const Example = () => {
 
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-gradient-to-b from-red-50 via-white to-slate-50 text-slate-900">
-      <header className="shrink-0 border-b border-red-200/70 bg-white/80 px-3 py-2 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <PromptInputButton
-            aria-label="Open menu"
-            onClick={toggleNav}
-            variant="ghost"
-            className="text-slate-700 hover:bg-red-50"
-          >
-            <MenuIcon size={18} />
-          </PromptInputButton>
+      <div
+        aria-hidden={!navOpen}
+        className={[
+          "absolute inset-0 z-40 bg-slate-950/20 backdrop-blur-[1px] transition-opacity duration-300",
+          navOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+        ].join(" ")}
+        onClick={closeNav}
+      />
 
-          <div className="leading-tight">
-            <div className="text-sm font-semibold text-slate-900">LLM Chat</div>
+      <aside
+        aria-hidden={!navOpen}
+        aria-label="Primary navigation"
+        className={[
+          "absolute inset-y-0 left-0 z-50 flex w-[min(22rem,calc(100vw-2rem))] flex-col border-r border-red-100 bg-white/96 shadow-2xl shadow-slate-900/15 backdrop-blur-xl transition-transform duration-300 ease-out",
+          navOpen ? "translate-x-0" : "-translate-x-full",
+        ].join(" ")}
+      >
+        <div className="flex items-center justify-between border-b border-red-100 px-5 py-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-[#C74634]">
+              Chat LLM
+            </div>
+            <div className="mt-1 text-sm text-slate-500">
+              Workspace navigation
+            </div>
+          </div>
+          <Button
+            aria-label="Close menu"
+            className="rounded-xl"
+            onClick={closeNav}
+            size="icon"
+            variant="ghost"
+          >
+            <PanelLeftCloseIcon className="size-5" />
+          </Button>
+        </div>
+
+        <div className="px-4 py-4">
+          <div className="rounded-2xl border border-red-100 bg-gradient-to-br from-red-50 via-white to-orange-50 p-4">
+            <div className="text-sm font-semibold text-slate-900">Ask, retrieve, organize</div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Move between chat, knowledge management, and retrieval docs without the header collapsing.
+            </p>
           </div>
         </div>
 
-        <a
-          href="/rag"
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
-        >
-          How this project works
-        </a>
-
-        {navOpen ? (
-          <div className="mt-2 rounded-2xl border border-red-200/70 bg-white shadow-sm">
-            <nav className="grid p-2 text-sm">
-              <a
-                className="flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-slate-900 hover:bg-red-50"
-                href="/"
-              >
-                <MenuIcon className="size-4 text-[#C74634]" />
-                Chat
-              </a>
-              <a
-                className="flex items-center gap-2 rounded-xl px-3 py-2 font-semibold text-slate-900 hover:bg-red-50"
-                href="/knowledge"
-              >
-                <LibraryIcon className="size-4 text-[#C74634]" />
-                Knowledge
-              </a>
-            </nav>
+        <nav className="flex-1 px-3 pb-4">
+          <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Navigation
           </div>
-        ) : null}
+          <div className="space-y-1">
+            {primaryNavItems.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <a
+                  className="flex items-start gap-3 rounded-2xl px-3 py-3 text-sm transition-colors hover:bg-red-50"
+                  href={item.href}
+                  key={item.href}
+                  onClick={closeNav}
+                >
+                  <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#C74634]/10 text-[#C74634]">
+                    <Icon className="size-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-slate-900">{item.label}</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">
+                      {item.description}
+                    </span>
+                  </span>
+                </a>
+              );
+            })}
+          </div>
+        </nav>
+
+        <div className="px-4 pb-5">
+          <Separator className="mb-4" />
+          <a
+            className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
+            href="/rag"
+            onClick={closeNav}
+          >
+            Project overview
+            <SparklesIcon className="size-4 text-[#C74634]" />
+          </a>
+        </div>
+      </aside>
+
+      <header className="shrink-0 border-b border-red-200/70 bg-white/80 px-3 py-2 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <PromptInputButton
+              aria-expanded={navOpen}
+              aria-label="Open menu"
+              aria-pressed={navOpen}
+              onClick={toggleNav}
+              variant="ghost"
+              className="text-slate-700 hover:bg-red-50"
+            >
+              <MenuIcon size={18} />
+            </PromptInputButton>
+
+            <div className="leading-tight">
+              <div className="text-sm font-semibold text-slate-900">LLM Chat</div>
+              <div className="text-xs text-slate-500">Conversational retrieval workspace</div>
+            </div>
+          </div>
+
+          <a
+            href="/rag"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+          >
+            How this project works
+          </a>
         </div>
       </header>
 
