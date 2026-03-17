@@ -16,6 +16,21 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 KNOWLEDGE_ROOT = (Path(__file__).resolve().parents[1] / "knowledge").resolve()
 EMBED_MODEL = "cohere.embed-v4.0"
+DEFAULT_CHUNK_SIZE = int(os.getenv("KNOWLEDGE_CHUNK_SIZE", "700"))
+DEFAULT_CHUNK_OVERLAP = int(os.getenv("KNOWLEDGE_CHUNK_OVERLAP", "120"))
+DEFAULT_EMBED_BATCH_SIZE = int(os.getenv("KNOWLEDGE_EMBED_BATCH_SIZE", "192"))
+DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("KNOWLEDGE_INSERT_BATCH_SIZE", "200"))
+
+
+def _normalize_embedding_source(raw_source: str) -> str:
+    metadata_source = raw_source
+    try:
+        raw_path = Path(raw_source).resolve()
+        if KNOWLEDGE_ROOT in raw_path.parents:
+            metadata_source = str(raw_path.relative_to(KNOWLEDGE_ROOT)).replace("\\", "/")
+    except Exception:
+        metadata_source = raw_source.replace("\\", "/")
+    return metadata_source
 
 
 class GenAIProvider:
@@ -77,7 +92,7 @@ class GenAIEmbedProvider:
         self.texts = None
         self.embed_response = None
     
-    def load_pdf(self, pdf_path: str, chunk_size: int = 300, chunk_overlap: int = 200):
+    def load_pdf(self, pdf_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP):
         """Load and process a PDF file for embedding.
 
         Args:
@@ -109,7 +124,7 @@ class GenAIEmbedProvider:
 
         return self.embed_response
 
-    def load_and_insert_pdf(self, pdf_path: str, db_conn: RAGDBConnection, chunk_size: int = 300, chunk_overlap: int = 200):
+    def load_and_insert_pdf(self, pdf_path: str, db_conn: RAGDBConnection, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP):
         """Load PDF, generate embeddings, and insert into database."""
         logger.info(f"Starting load_and_insert_pdf for {pdf_path}")
         try:
@@ -130,9 +145,10 @@ class GenAIEmbedProvider:
         pdf_path: str,
         db_conn: RAGDBConnection,
         progress_callback=None,
-        chunk_size: int = 300,
-        chunk_overlap: int = 200,
-        embed_batch_size: int = 96
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+        embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
+        insert_batch_size: int = DEFAULT_INSERT_BATCH_SIZE,
     ):
         """Load PDF, generate embeddings, and insert with detailed progress updates.
         
@@ -183,36 +199,40 @@ class GenAIEmbedProvider:
 
             # Stage 3: Insert into DB (80-100%)
             report("insert", 82, f"Inserting {len(self.embed_response)} embeddings into database")
+            insert_sql = (
+                f"INSERT INTO {db_conn.table_prefix}_embedding "
+                f"(text, embedding_vector, chapter, section, source) VALUES (:1, :2, :3, :4, :5)"
+            )
             with db_conn.get_connection() as conn:
-                for i, emb in enumerate(self.embed_response):
-                    chunk_text = self.texts[i][:3900]
-                    # Normalize knowledge-upload sources to a forward-slash path relative
-                    # to backend/knowledge so DB filters can use indexed equality on source.
-                    raw_source = str(self.splits[i].metadata.get('source', 'pdf-doc'))
-                    metadata_source = raw_source
-                    try:
-                        raw_path = Path(raw_source).resolve()
-                        if KNOWLEDGE_ROOT in raw_path.parents:
-                            metadata_source = str(raw_path.relative_to(KNOWLEDGE_ROOT)).replace("\\", "/")
-                    except Exception:
-                        metadata_source = raw_source.replace("\\", "/")
-                    # Extract filename for chapter, page number for section if available
-                    chapter = self.splits[i].metadata.get('source', 'unknown')[:100] if self.splits[i].metadata.get('source') else 'unknown'
-                    section = self.splits[i].metadata.get('page', 0)
-                    
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            f"INSERT INTO {db_conn.table_prefix}_embedding (text, embedding_vector, chapter, section, source) VALUES (:1, :2, :3, :4, :5)",
-                            [chunk_text, array.array("f", emb), chapter, int(section) if section else 0, metadata_source],
+                with conn.cursor() as cur:
+                    batch_rows: list[list[Any]] = []
+                    inserted = 0
+                    total_embeddings = len(self.embed_response)
+
+                    for i, emb in enumerate(self.embed_response):
+                        split = self.splits[i]
+                        raw_source = str(split.metadata.get("source", "pdf-doc"))
+                        batch_rows.append(
+                            [
+                                self.texts[i][:3900],
+                                array.array("f", emb),
+                                raw_source[:100] if raw_source else "unknown",
+                                int(split.metadata.get("page", 0) or 0),
+                                _normalize_embedding_source(raw_source),
+                            ]
                         )
-                    
-                    # Report progress every 50 chunks or at milestones
-                    if (i + 1) % 50 == 0 or i == len(self.embed_response) - 1:
-                        insert_pct = 82 + int(((i + 1) / len(self.embed_response)) * 18)
-                        report("insert", insert_pct, f"Inserted {i + 1}/{len(self.embed_response)} chunks")
+
+                        should_flush = len(batch_rows) >= insert_batch_size or i == total_embeddings - 1
+                        if not should_flush:
+                            continue
+
+                        cur.executemany(insert_sql, batch_rows)
                         conn.commit()
-                
-                conn.commit()
+                        inserted += len(batch_rows)
+                        batch_rows = []
+
+                        insert_pct = 82 + int((inserted / total_embeddings) * 18)
+                        report("insert", insert_pct, f"Inserted {inserted}/{total_embeddings} chunks")
 
             report("done", 100, f"Completed embedding for {num_chunks} chunks")
             return self.embed_response
@@ -221,7 +241,7 @@ class GenAIEmbedProvider:
             logger.exception(f"Error in load_and_insert_pdf_with_progress for {pdf_path}: {e}")
             raise
 
-    def load_all_rag_documents(self, db_conn: RAGDBConnection, chunk_size: int = 300, chunk_overlap: int = 200):
+    def load_all_rag_documents(self, db_conn: RAGDBConnection, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_overlap: int = DEFAULT_CHUNK_OVERLAP):
         """Load all PDF documents from the rag_docs directory and insert into database."""
         import os
         rag_docs_dir = "./core/rag_docs/"

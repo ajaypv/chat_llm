@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 
 from database.connections import (
@@ -16,6 +17,8 @@ from database.connections import (
 from core.gen_ai_provider import GenAIEmbedProvider
 
 logger = logging.getLogger(__name__)
+PROGRESS_THROTTLE_SECONDS = float(os.getenv("KNOWLEDGE_PROGRESS_THROTTLE_SECONDS", "1.0"))
+PROGRESS_MIN_DELTA = int(os.getenv("KNOWLEDGE_PROGRESS_MIN_DELTA", "2"))
 
 
 async def run_knowledge_worker(stop_event: asyncio.Event, poll_seconds: float = 2.0) -> None:
@@ -108,18 +111,38 @@ async def run_knowledge_worker(stop_event: asyncio.Event, poll_seconds: float = 
                 with db.get_connection() as conn:
                     update_knowledge_job(conn, db.table_prefix, job_id, progress_pct=base_pct, message=f"[{idx}/{len(files)}] starting {filename}")
 
-                def progress_callback(stage: str, sub_pct: int, msg: str):
-                    # Map sub-progress (0-100) to this file's range within the overall job
-                    file_progress = base_pct + int((sub_pct / 100.0) * file_pct_range)
-                    file_progress = min(95, max(base_pct, file_progress))
+                progress_state = {
+                    "last_pct": base_pct,
+                    "last_write_time": time.monotonic(),
+                    "pending_pct": base_pct,
+                    "pending_message": f"[{idx}/{len(files)}] starting {filename}",
+                }
+
+                def flush_progress(force: bool = False):
+                    pending_pct = int(progress_state["pending_pct"])
+                    pending_message = str(progress_state["pending_message"])
+                    now = time.monotonic()
+                    pct_delta = abs(pending_pct - int(progress_state["last_pct"]))
+                    elapsed = now - float(progress_state["last_write_time"])
+                    if not force and pct_delta < PROGRESS_MIN_DELTA and elapsed < PROGRESS_THROTTLE_SECONDS:
+                        return
                     with db.get_connection() as conn:
                         update_knowledge_job(
                             conn,
                             db.table_prefix,
                             job_id,
-                            progress_pct=file_progress,
-                            message=f"[{idx}/{len(files)}] {filename}: {stage} - {msg}"
+                            progress_pct=pending_pct,
+                            message=pending_message,
                         )
+                    progress_state["last_pct"] = pending_pct
+                    progress_state["last_write_time"] = now
+
+                def progress_callback(stage: str, sub_pct: int, msg: str):
+                    file_progress = base_pct + int((sub_pct / 100.0) * file_pct_range)
+                    file_progress = min(95, max(base_pct, file_progress))
+                    progress_state["pending_pct"] = file_progress
+                    progress_state["pending_message"] = f"[{idx}/{len(files)}] {filename}: {stage} - {msg}"
+                    flush_progress()
 
                 def _embed_one() -> None:
                     logger.info(f"[{idx}/{len(files)}] Calling load_and_insert_pdf_with_progress for {pdf_path}")
@@ -136,6 +159,7 @@ async def run_knowledge_worker(stop_event: asyncio.Event, poll_seconds: float = 
 
                 try:
                     await asyncio.to_thread(_embed_one)
+                    flush_progress(force=True)
                 except Exception as e:
                     logger.error(f"[{idx}/{len(files)}] Failed to embed {filename}: {e}")
                     with db.get_connection() as conn:

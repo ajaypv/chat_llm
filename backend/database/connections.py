@@ -7,6 +7,7 @@ import logging
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("KNOWLEDGE_INSERT_BATCH_SIZE", "200"))
 
 class RAGDBConnection:
     """Singleton for database connection pool and operations."""
@@ -167,19 +168,34 @@ class RAGDBConnection:
                     print(f"Skipping error: {e}")
 
     def insert_embedding(self, conn: oracledb.Connection, embeddings, texts, splits):
-        for i, emb in enumerate(embeddings):
-            chunk_text = texts[i][:3900]  # ensure within VARCHAR2(4000) limit according to table constraint
-            metadata_source = str(splits[i].metadata.get('source', 'pdf-doc'))
-            chapter = splits[i].metadata.get('source', 'unknown')[:100] if splits[i].metadata.get('source') else 'unknown'
-            section = splits[i].metadata.get('page', 0)
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"INSERT INTO {self.table_prefix}_embedding (text, embedding_vector, chapter, section, source) VALUES (:1, :2, :3, :4, :5)",
-                    [chunk_text, array.array("f", emb), chapter, int(section) if section else 0, metadata_source],
+        insert_sql = (
+            f"INSERT INTO {self.table_prefix}_embedding "
+            f"(text, embedding_vector, chapter, section, source) VALUES (:1, :2, :3, :4, :5)"
+        )
+        with conn.cursor() as cur:
+            batch_rows = []
+            for i, emb in enumerate(embeddings):
+                metadata_source = str(splits[i].metadata.get('source', 'pdf-doc'))
+                chapter = metadata_source[:100] if metadata_source else 'unknown'
+                section = int(splits[i].metadata.get('page', 0) or 0)
+                batch_rows.append(
+                    [
+                        texts[i][:3900],
+                        array.array("f", emb),
+                        chapter,
+                        section,
+                        metadata_source,
+                    ]
                 )
+                if len(batch_rows) < DEFAULT_INSERT_BATCH_SIZE:
+                    continue
+                cur.executemany(insert_sql, batch_rows)
+                conn.commit()
+                batch_rows = []
 
-        conn.commit()
+            if batch_rows:
+                cur.executemany(insert_sql, batch_rows)
+                conn.commit()
 
 
 def ensure_knowledge_tables(conn: oracledb.Connection, table_prefix: str) -> None:
