@@ -358,7 +358,7 @@ const PromptInputAttachmentsDisplay = () => {
   }
 
   return (
-    <Attachments variant="inline">
+    <Attachments variant="inline" className="gap-2 [&_[data-slot=attachment]]:rounded-2xl [&_[data-slot=attachment]]:border [&_[data-slot=attachment]]:border-slate-200/80 [&_[data-slot=attachment]]:bg-white/80 [&_[data-slot=attachment]]:shadow-sm [&_[data-slot=attachment-preview]]:min-h-24 [&_[data-slot=attachment-preview]]:overflow-hidden [&_[data-slot=attachment-preview]]:rounded-xl [&_[data-slot=attachment-preview]]:bg-slate-50 [&_[data-slot=attachment-preview]_img]:h-24 [&_[data-slot=attachment-preview]_img]:w-auto [&_[data-slot=attachment-preview]_img]:max-w-full [&_[data-slot=attachment-preview]_img]:object-contain sm:[&_[data-slot=attachment-preview]]:min-h-28 sm:[&_[data-slot=attachment-preview]_img]:h-28">
       {attachments.files.map((attachment) => (
         <AttachmentItem
           attachment={attachment as any}
@@ -1100,146 +1100,148 @@ const Example = () => {
         </div>
       </div>
 
-      <div className="grid shrink-0 gap-2 px-3 pb-3 pt-2 sm:px-4">
+      <div className="shrink-0 px-3 pb-5 pt-3 sm:px-4 sm:pb-6">
         <div className="mx-auto w-full max-w-3xl">
-        <Suggestions className="px-0">
-          {(followups.length ? followups : suggestions).map((suggestion) => (
-            <SuggestionItem
-              key={suggestion}
-              onClick={handleSuggestionClick}
-              suggestion={suggestion}
-            />
-          ))}
-        </Suggestions>
+          <Suggestions className="px-0">
+            {(followups.length ? followups : suggestions).map((suggestion) => (
+              <SuggestionItem
+                key={suggestion}
+                onClick={handleSuggestionClick}
+                suggestion={suggestion}
+              />
+            ))}
+          </Suggestions>
 
-        <div className="w-full rounded-2xl border border-slate-200/60 bg-transparent p-1.5 shadow-md shadow-black/5 backdrop-blur-sm [&_[data-slot=input-group]]:bg-transparent [&_[data-slot=input-group]]:border-slate-200/60 [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group]]:backdrop-blur-sm [&_[data-slot=input-group-addon]]:bg-transparent [&_[data-slot=input-group-control]]:bg-transparent [&_textarea]:bg-transparent [&_textarea]:!bg-transparent">
-          <PromptInput globalDrop multiple onSubmit={handleSubmit}>
-            <PromptInputHeader>
-              <PromptInputAttachmentsDisplay />
-            </PromptInputHeader>
-            <PromptInputBody>
-              <PromptInputTextarea className="min-h-9 max-h-28 overflow-y-auto py-1.5 text-sm leading-5" onChange={handleTextChange} value={text} />
-            </PromptInputBody>
-            <PromptInputFooter>
-              <PromptInputTools>
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuTrigger />
-                  <PromptInputActionMenuContent>
-                    <PromptInputActionAddAttachments />
-                  </PromptInputActionMenuContent>
-                </PromptInputActionMenu>
-                <PromptInputButton
-                  onClick={toggleSpeechToText}
-                  variant={isListening ? "default" : "ghost"}
-                  className={isListening ? "bg-[#C74634] hover:bg-[#B33C2D]" : ""}
-                >
-                  {isListening ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
-                  <span>{isListening ? "Stop" : "Voice"}</span>
-                </PromptInputButton>
-                <PromptInputButton
-                  onClick={toggleWebSearch}
-                  variant={useWebSearch ? "default" : "ghost"}
-                  className={
-                    useWebSearch ? "bg-[#C74634] hover:bg-[#B33C2D]" : ""
-                  }
-                >
-                  <GlobeIcon size={16} />
-                  <span>Search</span>
-                </PromptInputButton>
-                <ModelSelector
-                  onOpenChange={setModelSelectorOpen}
-                  open={modelSelectorOpen}
-                >
-                  <ModelSelectorTrigger asChild>
-                    <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
-                      {selectedModelData?.chefSlug && (
-                        <ModelSelectorLogo provider={selectedModelData.chefSlug} />
-                      )}
-                      {selectedModelData?.name && (
-                        <ModelSelectorName>{selectedModelData.name}</ModelSelectorName>
-                      )}
+          <div className="pointer-events-none mt-2 flex justify-center">
+            <div className="pointer-events-auto w-full max-w-3xl rounded-[22px] border border-white/70 bg-white/72 px-1.5 py-1 shadow-[0_14px_32px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/60 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/65 [&_[data-slot=input-group]]:border-transparent [&_[data-slot=input-group]]:bg-transparent [&_[data-slot=input-group]]:shadow-none [&_[data-slot=input-group-addon]]:bg-transparent [&_[data-slot=input-group-control]]:bg-transparent [&_textarea]:bg-transparent [&_textarea]:!bg-transparent">
+              <PromptInput globalDrop multiple onSubmit={handleSubmit}>
+                <PromptInputHeader>
+                  <PromptInputAttachmentsDisplay />
+                </PromptInputHeader>
+                <PromptInputBody>
+                  <PromptInputTextarea className="min-h-7 max-h-36 overflow-y-auto px-1.5 py-0.5 text-sm leading-5 placeholder:text-slate-400" onChange={handleTextChange} value={text} />
+                </PromptInputBody>
+                <PromptInputFooter>
+                  <PromptInputTools className="gap-1">
+                    <PromptInputActionMenu>
+                      <PromptInputActionMenuTrigger />
+                      <PromptInputActionMenuContent>
+                        <PromptInputActionAddAttachments />
+                      </PromptInputActionMenuContent>
+                    </PromptInputActionMenu>
+                    <PromptInputButton
+                      onClick={toggleSpeechToText}
+                      variant={isListening ? "default" : "ghost"}
+                      className={isListening ? "bg-[#C74634] hover:bg-[#B33C2D]" : ""}
+                    >
+                      {isListening ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
+                      <span>{isListening ? "Stop" : "Voice"}</span>
                     </PromptInputButton>
-                  </ModelSelectorTrigger>
-                  <ModelSelectorContent>
-                    <ModelSelectorInput placeholder="Search models..." />
-                    <ModelSelectorList>
-                      <ModelSelectorEmpty>
-                        No models found.
-                      </ModelSelectorEmpty>
-                      {chefs.map((chef) => (
-                        <ModelSelectorGroup heading={chef} key={chef}>
-                          {models
-                            .filter((m) => m.chef === chef)
-                            .map((m) => (
-                              <ModelItem
-                                isSelected={model === m.id}
-                                key={m.id}
-                                m={m}
-                                onSelect={handleModelSelect}
-                              />
-                            ))}
-                        </ModelSelectorGroup>
-                      ))}
-                    </ModelSelectorList>
-                  </ModelSelectorContent>
-                </ModelSelector>
-                <CategorySelector
-                  open={categorySelectorOpen}
-                  onOpenChange={setCategorySelectorOpen}
-                >
-                  <CategorySelectorTrigger asChild>
-                    <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
-                      <BrainIcon size={16} />
-                      <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
-                      {selectedCategories.length > 0 ? (
-                        <Badge variant="secondary">{selectedCategories.length}</Badge>
-                      ) : null}
+                    <PromptInputButton
+                      onClick={toggleWebSearch}
+                      variant={useWebSearch ? "default" : "ghost"}
+                      className={
+                        useWebSearch ? "bg-[#C74634] hover:bg-[#B33C2D]" : ""
+                      }
+                    >
+                      <GlobeIcon size={16} />
+                      <span>Search</span>
                     </PromptInputButton>
-                  </CategorySelectorTrigger>
+                    <ModelSelector
+                      onOpenChange={setModelSelectorOpen}
+                      open={modelSelectorOpen}
+                    >
+                      <ModelSelectorTrigger asChild>
+                        <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
+                          {selectedModelData?.chefSlug && (
+                            <ModelSelectorLogo provider={selectedModelData.chefSlug} />
+                          )}
+                          {selectedModelData?.name && (
+                            <ModelSelectorName>{selectedModelData.name}</ModelSelectorName>
+                          )}
+                        </PromptInputButton>
+                      </ModelSelectorTrigger>
+                      <ModelSelectorContent>
+                        <ModelSelectorInput placeholder="Search models..." />
+                        <ModelSelectorList>
+                          <ModelSelectorEmpty>
+                            No models found.
+                          </ModelSelectorEmpty>
+                          {chefs.map((chef) => (
+                            <ModelSelectorGroup heading={chef} key={chef}>
+                              {models
+                                .filter((m) => m.chef === chef)
+                                .map((m) => (
+                                  <ModelItem
+                                    isSelected={model === m.id}
+                                    key={m.id}
+                                    m={m}
+                                    onSelect={handleModelSelect}
+                                  />
+                                ))}
+                            </ModelSelectorGroup>
+                          ))}
+                        </ModelSelectorList>
+                      </ModelSelectorContent>
+                    </ModelSelector>
+                    <CategorySelector
+                      open={categorySelectorOpen}
+                      onOpenChange={setCategorySelectorOpen}
+                    >
+                      <CategorySelectorTrigger asChild>
+                        <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
+                          <BrainIcon size={16} />
+                          <CategorySelectorName>{selectedCategoryLabel}</CategorySelectorName>
+                          {selectedCategories.length > 0 ? (
+                            <Badge variant="secondary">{selectedCategories.length}</Badge>
+                          ) : null}
+                        </PromptInputButton>
+                      </CategorySelectorTrigger>
 
-                  <CategorySelectorContent title="Knowledge Categories">
-                    <CategorySelectorInput placeholder="Search categories..." />
-                    <CategorySelectorList>
-                      <CategorySelectorEmpty>No categories found.</CategorySelectorEmpty>
-                      <CategorySelectorGroup heading="Knowledge">
-                        <CategorySelectorItem
-                          onSelect={() => {
-                            clearCategories();
-                            setCategorySelectorOpen(false);
-                          }}
-                          value="__all__"
-                        >
-                          <span className="mr-2 inline-flex size-4 items-center justify-center">
-                            {selectedCategories.length === 0 ? (
-                              <CheckIcon className="size-4" />
-                            ) : null}
-                          </span>
-                          All categories
-                        </CategorySelectorItem>
-                        {availableCategories.map((cat) => {
-                          const active = selectedCategories.includes(cat);
-                          return (
+                      <CategorySelectorContent title="Knowledge Categories">
+                        <CategorySelectorInput placeholder="Search categories..." />
+                        <CategorySelectorList>
+                          <CategorySelectorEmpty>No categories found.</CategorySelectorEmpty>
+                          <CategorySelectorGroup heading="Knowledge">
                             <CategorySelectorItem
-                              key={cat}
-                              onSelect={() => toggleCategory(cat)}
-                              value={cat}
+                              onSelect={() => {
+                                clearCategories();
+                                setCategorySelectorOpen(false);
+                              }}
+                              value="__all__"
                             >
                               <span className="mr-2 inline-flex size-4 items-center justify-center">
-                                {active ? <CheckIcon className="size-4" /> : null}
+                                {selectedCategories.length === 0 ? (
+                                  <CheckIcon className="size-4" />
+                                ) : null}
                               </span>
-                              {cat}
+                              All categories
                             </CategorySelectorItem>
-                          );
-                        })}
-                      </CategorySelectorGroup>
-                    </CategorySelectorList>
-                  </CategorySelectorContent>
-                </CategorySelector>
-              </PromptInputTools>
-              <PromptInputSubmit disabled={isSubmitDisabled} status={status} />
-            </PromptInputFooter>
-          </PromptInput>
-        </div>
+                            {availableCategories.map((cat) => {
+                              const active = selectedCategories.includes(cat);
+                              return (
+                                <CategorySelectorItem
+                                  key={cat}
+                                  onSelect={() => toggleCategory(cat)}
+                                  value={cat}
+                                >
+                                  <span className="mr-2 inline-flex size-4 items-center justify-center">
+                                    {active ? <CheckIcon className="size-4" /> : null}
+                                  </span>
+                                  {cat}
+                                </CategorySelectorItem>
+                              );
+                            })}
+                          </CategorySelectorGroup>
+                        </CategorySelectorList>
+                      </CategorySelectorContent>
+                    </CategorySelector>
+                  </PromptInputTools>
+                  <PromptInputSubmit disabled={isSubmitDisabled} status={status} />
+                </PromptInputFooter>
+              </PromptInput>
+            </div>
+          </div>
         </div>
       </div>
     </div>
