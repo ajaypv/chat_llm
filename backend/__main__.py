@@ -4,6 +4,7 @@ import re
 import shutil
 from pathlib import Path
 import asyncio
+from contextlib import asynccontextmanager
 
 import click
 from dotenv import load_dotenv
@@ -23,26 +24,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def build_app() -> FastAPI:
-    app = FastAPI(title="chat_llm backend", version="0.1.0")
-
+@asynccontextmanager
+async def app_lifespan(app: FastAPI):
     stop_event = asyncio.Event()
-    worker_task: asyncio.Task | None = None
-
-    @app.on_event("startup")
-    async def _startup_worker():
-        nonlocal worker_task
-        # Run a single in-process worker for development.
-        worker_task = asyncio.create_task(run_knowledge_worker(stop_event))
-
-    @app.on_event("shutdown")
-    async def _shutdown_worker():
+    worker_task = asyncio.create_task(run_knowledge_worker(stop_event))
+    app.state.stop_event = stop_event
+    app.state.worker_task = worker_task
+    try:
+        yield
+    finally:
         stop_event.set()
-        if worker_task is not None:
-            try:
-                await worker_task
-            except Exception:
-                pass
+        try:
+            await worker_task
+        except Exception:
+            pass
+
+
+def build_app() -> FastAPI:
+    app = FastAPI(title="chat_llm backend", version="0.1.0", lifespan=app_lifespan)
 
     upload_root = (Path(__file__).resolve().parent / "knowledge")
     delete_tasks: dict[int, asyncio.Task] = {}
