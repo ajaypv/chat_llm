@@ -24,6 +24,7 @@ export default function KnowledgePage() {
   >([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(false);
   const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
+  const [deleteJobMessage, setDeleteJobMessage] = useState<string | null>(null);
 
   const loadCategories = useCallback(async () => {
     setIsLoadingCategories(true);
@@ -152,20 +153,48 @@ export default function KnowledgePage() {
     setDeletingCategory(cat);
     setUploadError(null);
     setUploadSuccess(null);
+    setDeleteJobMessage(`Queued delete for '${cat}'...`);
     try {
       const res = await fetch(
-        `http://localhost:8000/knowledge/category/${encodeURIComponent(cat)}`,
-        { method: "DELETE" }
+        `http://localhost:8000/knowledge/category/${encodeURIComponent(cat)}/delete`,
+        { method: "POST" }
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(json?.detail || `Delete failed (${res.status})`);
       }
-      setUploadSuccess(
-        `Deleted '${cat}' (embeddings: ${json?.deleted?.embedding_rows ?? 0}, files: ${json?.deleted?.knowledge_files ?? 0}).`
-      );
-      await loadCategories();
+
+      const jobId = Number(json?.job_id || 0);
+      if (!jobId) {
+        throw new Error("Delete job did not start correctly.");
+      }
+
+      let completed = false;
+      while (!completed) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const statusRes = await fetch(
+          `http://localhost:8000/knowledge/category-delete-jobs/${jobId}`
+        );
+        const statusJson = await statusRes.json().catch(() => ({}));
+        if (!statusRes.ok) {
+          throw new Error(statusJson?.detail || `Delete status failed (${statusRes.status})`);
+        }
+
+        const job = statusJson?.job;
+        const status = String(job?.status || "queued");
+        const message = String(job?.message || "");
+        setDeleteJobMessage(message || `Delete job #${jobId}: ${status}`);
+
+        if (status === "completed") {
+          completed = true;
+          setUploadSuccess(`Deleted '${cat}'. ${message}`);
+          await loadCategories();
+        } else if (status === "failed") {
+          throw new Error(message || `Delete job #${jobId} failed.`);
+        }
+      }
     } catch (err: any) {
+      setDeleteJobMessage(null);
       setUploadError(err?.message ?? "Failed to delete category");
     } finally {
       setDeletingCategory(null);
@@ -283,6 +312,12 @@ export default function KnowledgePage() {
               {uploadSuccess ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
                   {uploadSuccess}
+                </div>
+              ) : null}
+
+              {deleteJobMessage ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {deleteJobMessage}
                 </div>
               ) : null}
 

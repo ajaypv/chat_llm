@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import array
 import logging
 from typing import Any
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+KNOWLEDGE_ROOT = (Path(__file__).resolve().parents[1] / "knowledge").resolve()
 EMBED_MODEL = "cohere.embed-v4.0"
 
 
@@ -184,9 +186,16 @@ class GenAIEmbedProvider:
             with db_conn.get_connection() as conn:
                 for i, emb in enumerate(self.embed_response):
                     chunk_text = self.texts[i][:3900]
-                    # Use the underlying PDF storage path (relative path) as 'source'
-                    # so RAG queries can filter by knowledge categories via knowledge_file.
-                    metadata_source = str(self.splits[i].metadata.get('source', 'pdf-doc'))
+                    # Normalize knowledge-upload sources to a forward-slash path relative
+                    # to backend/knowledge so DB filters can use indexed equality on source.
+                    raw_source = str(self.splits[i].metadata.get('source', 'pdf-doc'))
+                    metadata_source = raw_source
+                    try:
+                        raw_path = Path(raw_source).resolve()
+                        if KNOWLEDGE_ROOT in raw_path.parents:
+                            metadata_source = str(raw_path.relative_to(KNOWLEDGE_ROOT)).replace("\\", "/")
+                    except Exception:
+                        metadata_source = raw_source.replace("\\", "/")
                     # Extract filename for chapter, page number for section if available
                     chapter = self.splits[i].metadata.get('source', 'unknown')[:100] if self.splits[i].metadata.get('source') else 'unknown'
                     section = self.splits[i].metadata.get('page', 0)

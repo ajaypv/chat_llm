@@ -14,7 +14,7 @@ from uuid import uuid4
 from starlette.responses import StreamingResponse
 
 from chat_app.main_llm import KnowledgeAssistantAgent
-from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_job
+from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_delete_job, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_delete_job, get_knowledge_job, update_knowledge_job, finish_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
 
 load_dotenv()
@@ -45,6 +45,7 @@ def build_app() -> FastAPI:
                 pass
 
     upload_root = (Path(__file__).resolve().parent / "knowledge")
+    delete_tasks: dict[int, asyncio.Task] = {}
 
     def _safe_category(value: str) -> str:
         value = (value or "").strip()
@@ -406,58 +407,186 @@ def build_app() -> FastAPI:
             cats = [p.name for p in sorted([p for p in root.iterdir() if p.is_dir()])]
             return {"categories": cats}
 
-    @app.delete("/knowledge/category/{category}")
-    async def knowledge_delete_category(category: str):
-        """Delete a knowledge category from filesystem + DB (knowledge_file and embeddings)."""
+    async def _run_knowledge_delete_job(job_id: int, category: str) -> None:
+        """Delete a knowledge category from filesystem + DB in the background."""
         cat = _safe_category(category)
         cat_dir = (upload_root / cat).resolve()
+        upload_root_resolved = upload_root.resolve()
 
         db = RAGDBConnection()
         deleted_embeddings = 0
         deleted_files = 0
         deleted_job_links = 0
+        embedding_cleanup_ok = True
+
+        logger.info("Starting async knowledge category delete for '%s' (job=%s)", cat, job_id)
+
+        try:
+            with db.get_connection() as conn:
+                update_knowledge_job(
+                    conn,
+                    db.table_prefix,
+                    job_id,
+                    status="running",
+                    progress_pct=5,
+                    message=f"delete:{cat}:starting",
+                )
+        except Exception:
+            logger.exception("Failed to mark delete job %s as running", job_id)
 
         try:
             with db.get_connection() as conn:
                 ensure_knowledge_tables(conn, db.table_prefix)
                 with conn.cursor() as cur:
-                    # Delete embedding rows that map to files in this category.
                     cur.execute(
                         f"""
-                        DELETE FROM {db.table_prefix}_embedding e
-                        WHERE EXISTS (
-                          SELECT 1
-                          FROM {db.table_prefix}_knowledge_file f
-                          WHERE f.category = :cat
-                            AND (
-                              REPLACE(REPLACE(e.source, '\\', '/'), :base_root, '') = f.storage_path
-                              OR REPLACE(e.source, '\\', '/') = REPLACE(:abs_prefix || f.storage_path, '\\', '/')
-                              OR REPLACE(e.source, '\\', '/') = REPLACE(f.storage_path, '\\', '/')
-                            )
-                        )
-                        """,
-                        {
-                            "cat": cat,
-                            "base_root": str(upload_root.resolve()).replace("\\", "/") + "/",
-                            "abs_prefix": str(upload_root.resolve()).replace("\\", "/") + "/",
-                        },
-                    )
-                    deleted_embeddings = int(cur.rowcount or 0)
-
-                    # Delete job-file links for this category's files.
-                    cur.execute(
-                        f"""
-                        DELETE FROM {db.table_prefix}_knowledge_job_file jf
-                        WHERE EXISTS (
-                          SELECT 1
-                          FROM {db.table_prefix}_knowledge_file f
-                          WHERE f.id = jf.file_id
-                            AND f.category = :cat
-                        )
+                        SELECT id, storage_path
+                        FROM {db.table_prefix}_knowledge_file
+                        WHERE category = :cat
                         """,
                         {"cat": cat},
                     )
-                    deleted_job_links = int(cur.rowcount or 0)
+                    category_files = cur.fetchall() or []
+
+                    logger.info(
+                        "Category '%s' has %s knowledge file rows to delete",
+                        cat,
+                        len(category_files),
+                    )
+
+                    update_knowledge_job(
+                        conn,
+                        db.table_prefix,
+                        job_id,
+                        progress_pct=20,
+                        message=f"delete:{cat}:loaded {len(category_files)} files",
+                    )
+
+                    sources_to_delete: set[str] = set()
+                    filename_patterns: set[str] = set()
+                    file_ids: list[int] = []
+                    for row in category_files:
+                        if not row:
+                            continue
+                        file_id = int(row[0])
+                        storage_path = str(row[1] or "").replace("\\", "/")
+                        if not storage_path:
+                            continue
+
+                        file_ids.append(file_id)
+                        abs_path = str((upload_root_resolved / storage_path).resolve()).replace("\\", "/")
+                        filename = Path(storage_path).name
+                        sources_to_delete.add(storage_path)
+                        sources_to_delete.add(abs_path)
+                        filename_patterns.add(f"%/{filename}")
+                        filename_patterns.add(f"%/{filename}_start_%")
+
+                    if sources_to_delete:
+                        bind_names = []
+                        bind_values: dict[str, str] = {}
+                        for idx, source in enumerate(sorted(sources_to_delete)):
+                            bind_name = f"src_{idx}"
+                            bind_names.append(f":{bind_name}")
+                            bind_values[bind_name] = source
+
+                        try:
+                            cur.execute(
+                                f"DELETE FROM {db.table_prefix}_embedding WHERE source IN ({', '.join(bind_names)})",
+                                bind_values,
+                            )
+                            deleted_embeddings = int(cur.rowcount or 0)
+
+                            # Legacy fallback: older rows stored absolute PDF paths and chunk suffixes.
+                            # Restrict fallback to the category's filenames so we avoid a broad full-table scan.
+                            if filename_patterns:
+                                pattern_clauses = []
+                                pattern_binds: dict[str, str] = {}
+                                for idx, pattern in enumerate(sorted(filename_patterns)):
+                                    bind_name = f"pattern_{idx}"
+                                    pattern_clauses.append(f"REPLACE(source, '\\', '/') LIKE :{bind_name}")
+                                    pattern_binds[bind_name] = pattern
+
+                                cur.execute(
+                                    f"DELETE FROM {db.table_prefix}_embedding WHERE {' OR '.join(pattern_clauses)}",
+                                    pattern_binds,
+                                )
+                                deleted_embeddings += int(cur.rowcount or 0)
+                        except Exception as embedding_err:
+                            embedding_cleanup_ok = False
+                            logger.warning(
+                                "Embedding cleanup for category '%s' did not complete inline: %s",
+                                cat,
+                                str(embedding_err),
+                            )
+                            conn.rollback()
+                            ensure_knowledge_tables(conn, db.table_prefix)
+                            with conn.cursor() as retry_cur:
+                                if file_ids:
+                                    file_id_binds = []
+                                    file_id_values: dict[str, int] = {}
+                                    for idx, file_id in enumerate(file_ids):
+                                        bind_name = f"file_id_retry_{idx}"
+                                        file_id_binds.append(f":{bind_name}")
+                                        file_id_values[bind_name] = file_id
+                                    retry_cur.execute(
+                                        f"DELETE FROM {db.table_prefix}_knowledge_job_file WHERE file_id IN ({', '.join(file_id_binds)})",
+                                        file_id_values,
+                                    )
+                                    deleted_job_links = int(retry_cur.rowcount or 0)
+                                else:
+                                    deleted_job_links = 0
+
+                                retry_cur.execute(
+                                    f"DELETE FROM {db.table_prefix}_knowledge_file WHERE category = :cat",
+                                    {"cat": cat},
+                                )
+                                deleted_files = int(retry_cur.rowcount or 0)
+
+                            conn.commit()
+                            logger.info(
+                                "Deleted metadata for category '%s' even though embedding cleanup was deferred",
+                                cat,
+                            )
+                            deleted_embeddings = 0
+                    else:
+                        deleted_embeddings = 0
+
+                    logger.info(
+                        "Deleted %s embedding rows for category '%s'",
+                        deleted_embeddings,
+                        cat,
+                    )
+
+                    update_knowledge_job(
+                        conn,
+                        db.table_prefix,
+                        job_id,
+                        progress_pct=65,
+                        message=f"delete:{cat}:deleted embeddings={deleted_embeddings}",
+                    )
+
+                    # Delete job-file links for this category's files.
+                    if file_ids:
+                        file_id_binds = []
+                        file_id_values: dict[str, int] = {}
+                        for idx, file_id in enumerate(file_ids):
+                            bind_name = f"file_id_{idx}"
+                            file_id_binds.append(f":{bind_name}")
+                            file_id_values[bind_name] = file_id
+
+                        cur.execute(
+                            f"DELETE FROM {db.table_prefix}_knowledge_job_file WHERE file_id IN ({', '.join(file_id_binds)})",
+                            file_id_values,
+                        )
+                        deleted_job_links = int(cur.rowcount or 0)
+                    else:
+                        deleted_job_links = 0
+
+                    logger.info(
+                        "Deleted %s job-file link rows for category '%s'",
+                        deleted_job_links,
+                        cat,
+                    )
 
                     # Delete file records for this category.
                     cur.execute(
@@ -466,10 +595,35 @@ def build_app() -> FastAPI:
                     )
                     deleted_files = int(cur.rowcount or 0)
 
+                    logger.info(
+                        "Deleted %s knowledge_file rows for category '%s'",
+                        deleted_files,
+                        cat,
+                    )
+
+                    update_knowledge_job(
+                        conn,
+                        db.table_prefix,
+                        job_id,
+                        progress_pct=85,
+                        message=f"delete:{cat}:deleted files={deleted_files}",
+                    )
+
                 conn.commit()
         except Exception as e:
             logger.exception("Failed deleting category from DB: %s", str(e))
-            raise HTTPException(status_code=500, detail="failed to delete category from database")
+            try:
+                with db.get_connection() as conn:
+                    finish_knowledge_job(
+                        conn,
+                        db.table_prefix,
+                        job_id,
+                        ok=False,
+                        message=f"delete:{cat}:failed:{str(e)[:900]}",
+                    )
+            finally:
+                delete_tasks.pop(job_id, None)
+            return
 
         deleted_fs = False
         try:
@@ -479,15 +633,52 @@ def build_app() -> FastAPI:
         except Exception as e:
             logger.warning("Failed deleting category folder '%s': %s", cat, str(e))
 
+        logger.info("Completed knowledge category delete for '%s'", cat)
+
+        try:
+            with db.get_connection() as conn:
+                finish_knowledge_job(
+                    conn,
+                    db.table_prefix,
+                    job_id,
+                    ok=True,
+                    message=(
+                        f"delete:{cat}:completed:embedding_cleanup_ok={embedding_cleanup_ok};"
+                        f"embeddings={deleted_embeddings};files={deleted_files};job_links={deleted_job_links};fs={deleted_fs}"
+                    )[:1000],
+                )
+        finally:
+            delete_tasks.pop(job_id, None)
+
+    @app.post("/knowledge/category/{category}/delete")
+    async def knowledge_delete_category_start(category: str):
+        cat = _safe_category(category)
+        db = RAGDBConnection()
+        with db.get_connection() as conn:
+            ensure_knowledge_tables(conn, db.table_prefix)
+            job_id = create_knowledge_delete_job(conn, db.table_prefix, cat)
+
+        delete_tasks[job_id] = asyncio.create_task(_run_knowledge_delete_job(job_id, cat))
+
         return {
             "ok": True,
+            "job_id": job_id,
             "category": cat,
-            "deleted": {
-                "embedding_rows": deleted_embeddings,
-                "knowledge_files": deleted_files,
-                "job_file_links": deleted_job_links,
-                "filesystem_folder_removed": deleted_fs,
-            },
+            "status": "queued",
+        }
+
+    @app.get("/knowledge/category-delete-jobs/{job_id}")
+    async def knowledge_delete_category_status(job_id: int):
+        db = RAGDBConnection()
+        with db.get_connection() as conn:
+            ensure_knowledge_tables(conn, db.table_prefix)
+            job = get_knowledge_delete_job(conn, db.table_prefix, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="delete job not found")
+
+        return {
+            "ok": True,
+            "job": job,
         }
 
     async def _chat_stream(query: str, session_id: str):

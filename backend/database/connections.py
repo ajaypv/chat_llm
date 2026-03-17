@@ -3,7 +3,10 @@ import array
 import oracledb
 from contextlib import contextmanager
 from dotenv import load_dotenv
+import logging
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class RAGDBConnection:
     """Singleton for database connection pool and operations."""
@@ -35,6 +38,7 @@ class RAGDBConnection:
     def _get_pool(self) -> oracledb.ConnectionPool:
         """Get or create the connection pool (lazy initialization)."""
         if RAGDBConnection._pool is None:
+            logger.info("Creating Oracle connection pool")
             RAGDBConnection._pool = oracledb.create_pool(
                 user=self._user,
                 password=self._password,
@@ -45,8 +49,25 @@ class RAGDBConnection:
                 min=1,
                 max=5,
                 increment=1,
+                ping_interval=30,
             )
         return RAGDBConnection._pool
+
+    def reset_pool(self) -> None:
+        pool = RAGDBConnection._pool
+        RAGDBConnection._pool = None
+        if pool is None:
+            return
+        try:
+            logger.warning("Closing stale Oracle connection pool")
+            pool.close(force=True)
+        except Exception as exc:
+            logger.warning("Failed closing Oracle pool cleanly: %s", exc)
+
+    @staticmethod
+    def is_connection_error(exc: Exception) -> bool:
+        text = str(exc or "")
+        return any(code in text for code in ("DPY-4011", "DPY-1001", "DPI-1080", "ORA-03113", "ORA-03114"))
     
     @contextmanager
     def get_connection(self):
@@ -56,12 +77,41 @@ class RAGDBConnection:
             with db.get_connection() as conn:
                 cols, rows = db.execute_query(conn, sql)
         """
-        pool = self._get_pool()
-        conn = pool.acquire()
+        conn = None
+        pool = None
+        for attempt in range(2):
+            pool = self._get_pool()
+            try:
+                conn = pool.acquire()
+                break
+            except Exception as exc:
+                if attempt == 0 and self.is_connection_error(exc):
+                    logger.warning("Oracle pool acquire failed due to stale connection, resetting pool: %s", exc)
+                    self.reset_pool()
+                    continue
+                raise
+
+        if conn is None or pool is None:
+            raise RuntimeError("failed to acquire Oracle connection")
+
         try:
             yield conn
+        except Exception as exc:
+            if self.is_connection_error(exc):
+                logger.warning("Oracle connection error during DB operation, dropping pool: %s", exc)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self.reset_pool()
+                conn = None
+            raise
         finally:
-            pool.release(conn)
+            if conn is not None:
+                try:
+                    pool.release(conn)
+                except Exception:
+                    pass
 
     def connect_db(self) -> oracledb.Connection:
         try:
@@ -392,3 +442,45 @@ def finish_knowledge_job(conn: oracledb.Connection, table_prefix: str, job_id: i
             [status, status, (message or '')[:1000], job_id],
         )
     conn.commit()
+
+
+def create_knowledge_delete_job(conn: oracledb.Connection, table_prefix: str, category: str) -> int:
+    with conn.cursor() as cur:
+        out_id = cur.var(oracledb.NUMBER)
+        cur.execute(
+            f"""
+            INSERT INTO {table_prefix}_knowledge_job (status, progress_pct, message, updated_at)
+            VALUES ('queued', 0, :message, SYSTIMESTAMP)
+            RETURNING id INTO :job_id
+            """,
+            {"message": f"delete:{category}"[:1000], "job_id": out_id},
+        )
+        job_id = int(out_id.getvalue()[0])
+    conn.commit()
+    return job_id
+
+
+def get_knowledge_delete_job(conn: oracledb.Connection, table_prefix: str, job_id: int) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT id, status, progress_pct, message, created_at, updated_at, started_at, finished_at
+            FROM {table_prefix}_knowledge_job
+            WHERE id = :job_id
+            """,
+            {"job_id": job_id},
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        message = row[3] if row[3] is None else str(row[3])
+        category = ""
+        if message and message.startswith("delete:"):
+            category = message.split(":", 1)[1]
+        return {
+            "id": int(row[0]),
+            "status": str(row[1]),
+            "progress_pct": int(row[2]),
+            "message": message,
+            "category": category,
+        }
