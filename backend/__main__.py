@@ -13,15 +13,95 @@ from fastapi import UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 from starlette.responses import StreamingResponse
+from langchain.messages import HumanMessage
 
 from chat_app.main_llm import KnowledgeAssistantAgent
 from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_delete_job, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_delete_job, get_knowledge_job, update_knowledge_job, finish_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
+from langchain_oci import ChatOCIOpenAI
+from langchain_oci.common.auth import OCIAuthType, create_oci_client_kwargs
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _build_oci_web_search_client() -> ChatOCIOpenAI:
+    if not os.getenv("OCI_OPENAI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "Web search requires an OCI OpenAI API key, but neither OCI_OPENAI_API_KEY nor OPENAI_API_KEY is configured. "
+            "The current SERVICE_ENDPOINT/AUTH_PROFILE setup is sufficient for ChatOCIGenAI, but this OpenAI-compatible web search path in your tenancy is rejecting signer-only auth."
+        )
+
+    client_kwargs = create_oci_client_kwargs(
+        auth_type=OCIAuthType.API_KEY.name,
+        service_endpoint=os.getenv("SERVICE_ENDPOINT"),
+        auth_profile=os.getenv("AUTH_PROFILE", "DEFAULT"),
+    )
+    return ChatOCIOpenAI(
+        auth=client_kwargs.get("signer"),
+        model=os.getenv("OCI_OPENAI_WEB_SEARCH_MODEL", "openai.gpt-4.1"),
+        service_endpoint=os.getenv("SERVICE_ENDPOINT"),
+        compartment_id=os.getenv("COMPARTMENT_ID"),
+        store=False,
+    )
+
+
+def _extract_web_search_payload(ai_message) -> tuple[str, list[dict[str, str]]]:
+    output_text = ""
+    sources: list[dict[str, str]] = []
+
+    content = getattr(ai_message, "content", None)
+    if isinstance(content, str):
+        output_text = content
+    elif isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type in {"text", "output_text"}:
+                output_text += str(item.get("text", "") or "")
+            elif item_type in {"citation", "url_citation"}:
+                url = str(item.get("url", "") or item.get("href", "") or "")
+                title = str(item.get("title", "") or url or "Source")
+                if url:
+                    sources.append({"title": title, "href": url})
+            elif item_type == "web_search_call":
+                action = item.get("action") or {}
+                for source in action.get("sources", []) or []:
+                    if not isinstance(source, dict):
+                        continue
+                    href = str(source.get("url", "") or "")
+                    title = str(source.get("title", "") or href or "Source")
+                    if href:
+                        sources.append({"title": title, "href": href})
+
+    response_metadata = getattr(ai_message, "response_metadata", None) or {}
+    metadata_citations = response_metadata.get("citations") or []
+    for citation in metadata_citations:
+        if not isinstance(citation, dict):
+            continue
+        href = str(
+            citation.get("url", "")
+            or citation.get("source", "")
+            or citation.get("href", "")
+            or ""
+        )
+        title = str(citation.get("title", "") or href or "Source")
+        if href:
+            sources.append({"title": title, "href": href})
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        key = (source["title"], source["href"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(source)
+
+    return output_text.strip(), deduped
 
 
 @asynccontextmanager
@@ -101,15 +181,91 @@ def build_app() -> FastAPI:
 
         session_id = payload.get("session_id") or "local"
         top_k = int(payload.get("top_k") or 10)
+        use_web_search = bool(payload.get("use_web_search"))
 
         logger.info(
-            "[rid=%s] /chat: session_id=%s query_len=%s top_k=%s categories=%s",
+            "[rid=%s] /chat: session_id=%s query_len=%s top_k=%s categories=%s use_web_search=%s",
             request_id,
             session_id,
             len(query),
             top_k,
             categories_list,
+            use_web_search,
         )
+
+        if use_web_search:
+            async def gen_web_search():
+                import json
+
+                tool_intent_patterns = (
+                    "what tools do you have",
+                    "what are the tools you have access",
+                    "available tools",
+                    "which tools do you have",
+                    "what tools can you use",
+                )
+                lowered_query = query.lower()
+
+                if any(pattern in lowered_query for pattern in tool_intent_patterns):
+                    tool_summary = (
+                        "Available Tools\n\n"
+                        "When Search is enabled, the active tool is:\n\n"
+                        "1. web_search_preview\n"
+                        "   Description: Retrieves current information from the web using OCI OpenAI web search.\n"
+                        "   Use cases: latest news, recent events, live information, and web citations.\n\n"
+                        "When Search is enabled for this message, semantic_search and nl2sql_tool are not used for the answer path."
+                    )
+                    yield json.dumps({
+                        "updates": "Model calling tool: web_search with args {\"query\": \"tool capability summary\"}"
+                    }) + "\n"
+                    yield json.dumps({
+                        "updates": "Tool web_search responded with:\nSearch mode is enabled; web_search_preview is the active tool for this request."
+                    }) + "\n"
+                    yield json.dumps({
+                        "type": "final",
+                        "is_task_complete": True,
+                        "content": tool_summary,
+                        "token_count": "0",
+                    }) + "\n"
+                    return
+
+                yield json.dumps({
+                    "updates": "Model calling tool: web_search with args {\"query\": %s}" % json.dumps(query)
+                }) + "\n"
+
+                try:
+                    client = _build_oci_web_search_client()
+                    search_model = client.bind_tools([{"type": "web_search_preview"}])
+                    response = await asyncio.to_thread(
+                        search_model.invoke,
+                        [HumanMessage(content=query)],
+                    )
+                    final_content, sources = _extract_web_search_payload(response)
+                    yield json.dumps({
+                        "updates": "Tool web_search responded with:\n" + (final_content or "No web search result returned."),
+                    }) + "\n"
+                    yield json.dumps({
+                        "type": "final",
+                        "is_task_complete": True,
+                        "content": final_content or "No web search result returned.",
+                        "sources": sources,
+                        "token_count": "0",
+                    }) + "\n"
+                except Exception as exc:
+                    logger.exception("[rid=%s] web search request failed: %s", request_id, exc)
+                    yield json.dumps({"updates": f"Tool web_search responded with:\nError: {str(exc)}"}) + "\n"
+                    yield json.dumps({
+                        "type": "final",
+                        "is_task_complete": True,
+                        "content": (
+                            "Web search is enabled, but this OCI OpenAI web-search path is not configured for your current environment. "
+                            "Your app currently has SERVICE_ENDPOINT/AUTH_PROFILE OCI auth for ChatOCIGenAI, but no OCI/OpenAI API key is configured for the OpenAI-compatible web-search endpoint. "
+                            f"Underlying error: {str(exc)}"
+                        ),
+                        "token_count": "0",
+                    }) + "\n"
+
+            return StreamingResponse(gen_web_search(), media_type="application/x-ndjson")
 
         # Always run RAG retrieval server-side so the experience doesn't depend on
         # whether the model decides to invoke tools.

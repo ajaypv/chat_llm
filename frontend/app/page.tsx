@@ -189,6 +189,7 @@ type ChatStreamChunk = {
   delta?: string;
   content?: string;
   suggestions?: string; // JSON string from backend
+  sources?: SourceRef[];
 };
 
 type ToolEvent = {
@@ -288,6 +289,8 @@ const toCitationUrl = (source: string): string => {
   if (/^https?:\/\//i.test(s)) return s;
   return `https://source.local/${encodeURIComponent(s)}`;
 };
+
+const isWebUrl = (value: string): boolean => /^https?:\/\//i.test(String(value || "").trim());
 
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
 
@@ -592,6 +595,7 @@ const Example = () => {
           session_id: String(Date.now()),
           categories: selectedCategories,
           top_k: 10,
+          use_web_search: useWebSearch,
         }),
       });
 
@@ -686,6 +690,16 @@ const Example = () => {
                 updateMessageContent(messageId, String(chunk.content));
               }
 
+              if (Array.isArray(chunk.sources)) {
+                const parsedSources = chunk.sources
+                  .map((source) => ({
+                    href: String(source?.href ?? "").trim(),
+                    title: String(source?.title ?? source?.href ?? "Source").trim(),
+                  }))
+                  .filter((source) => source.href);
+                setMessageSources(messageId, parsedSources);
+              }
+
               if (chunk.suggestions) {
                 try {
                   const parsed = JSON.parse(chunk.suggestions) as {
@@ -710,7 +724,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, selectedCategories, setMessageSources, updateMessageContent]
+    [appendToolEvent, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
   );
 
   const addUserMessage = useCallback(
@@ -1053,7 +1067,11 @@ const Example = () => {
                                           className="mt-2"
                                           title={source.title}
                                           url={source.href}
-                                          description="Retrieved from the RAG knowledge context used for this answer."
+                                          description={
+                                            isWebUrl(source.href)
+                                              ? "Retrieved from live web search results."
+                                              : "Retrieved from the RAG knowledge context used for this answer."
+                                          }
                                         />
                                       </div>
                                     </InlineCitationCardBody>
