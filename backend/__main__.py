@@ -270,7 +270,6 @@ def build_app() -> FastAPI:
         # Always run RAG retrieval server-side so the experience doesn't depend on
         # whether the model decides to invoke tools.
         rag_context: str = ""
-        rag_debug_updates: list[str] = []
         nl2sql_result: str = ""
 
         q_lower = str(query or "").lower()
@@ -305,66 +304,70 @@ def build_app() -> FastAPI:
             and any(k in q_lower for k in restaurant_entity_keywords)
         )
 
-        if use_nl2sql:
-            try:
-                from chat_app.nl2sql_tool import nl2sql_tool
-                import json
-
-                rag_debug_updates.append(
-                    "Model calling tool: nl2sql_tool with args "
-                    + json.dumps({"question": query})
-                )
-                nl2sql_result = await nl2sql_tool.ainvoke({"question": query})
-                rag_debug_updates.append(
-                    "Tool nl2sql_tool responded with:\n" + str(nl2sql_result)
-                )
-            except Exception as e:
-                logger.warning("[rid=%s] nl2sql_tool failed: %s", request_id, str(e))
-                nl2sql_result = ""
-
-        try:
-            from chat_app.rag_tool import semantic_search_raw
-            import json
-
-            # Emit a tool-like status line so the frontend can render it in the Tool UI.
-            rag_debug_updates.append(
-                "Model calling tool: semantic_search with args "
-                + json.dumps({"query": query, "top_k": top_k, "categories": categories_list})
-            )
-
-            rag_context = await semantic_search_raw(
-                query=query,
-                top_k=top_k,
-                categories=categories_list,
-                request_id=request_id,
-            )
-
-            rag_debug_updates.append(
-                "Tool semantic_search responded with:\n" + str(rag_context)
-            )
-        except Exception as e:
-            logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
-
-        logger.info(
-            "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
-            request_id,
-            use_nl2sql,
-            bool(nl2sql_result),
-            bool(rag_context and "No relevant documents found" not in rag_context),
-        )
-
         async def gen():
             import json
 
-            # Send RAG tool-call/result updates first so the UI shows them
-            # even if the LLM stream is slow.
-            for u in rag_debug_updates:
-                yield json.dumps({"updates": u}) + "\n"
+            current_nl2sql_result = ""
+            current_rag_context = ""
+
+            if use_nl2sql:
+                yield json.dumps(
+                    {
+                        "updates": "Model calling tool: nl2sql_tool with args "
+                        + json.dumps({"question": query})
+                    }
+                ) + "\n"
+
+                try:
+                    from chat_app.nl2sql_tool import nl2sql_tool
+
+                    current_nl2sql_result = await nl2sql_tool.ainvoke({"question": query})
+                except Exception as e:
+                    logger.warning("[rid=%s] nl2sql_tool failed: %s", request_id, str(e))
+                    current_nl2sql_result = ""
+
+                if current_nl2sql_result:
+                    yield json.dumps(
+                        {"updates": "Tool nl2sql_tool responded with:\n" + str(current_nl2sql_result)}
+                    ) + "\n"
+
+            yield json.dumps(
+                {
+                    "updates": "Model calling tool: semantic_search with args "
+                    + json.dumps({"query": query, "top_k": top_k, "categories": categories_list})
+                }
+            ) + "\n"
+
+            try:
+                from chat_app.rag_tool import semantic_search_raw
+
+                current_rag_context = await semantic_search_raw(
+                    query=query,
+                    top_k=top_k,
+                    categories=categories_list,
+                    request_id=request_id,
+                )
+            except Exception as e:
+                logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
+                current_rag_context = ""
+
+            logger.info(
+                "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
+                request_id,
+                use_nl2sql,
+                bool(current_nl2sql_result),
+                bool(current_rag_context and "No relevant documents found" not in current_rag_context),
+            )
+
+            if current_rag_context:
+                yield json.dumps(
+                    {"updates": "Tool semantic_search responded with:\n" + str(current_rag_context)}
+                ) + "\n"
 
             # Stream chunks as NDJSON so the frontend can update incrementally.
             augmented = query
             selected_cats = categories_list
-            if nl2sql_result:
+            if current_nl2sql_result:
                 augmented = (
                     "You are answering a user question using database query results and retrieved knowledge snippets.\n"
                     "Use the database results below as the source of truth for structured facts such as restaurant names, addresses, coordinates, menu items, prices, and availability.\n"
@@ -386,12 +389,12 @@ def build_app() -> FastAPI:
                     "If useful, summarize the best matches as bullet points.\n"
                     "If the results are empty, say no matching records were found.\n"
                     "Do not dump raw tool output without explanation.\n\n"
-                    f"Database results:\n{nl2sql_result}\n\n"
-                    f"Retrieved knowledge snippets (each snippet includes a Source):\n{rag_context if rag_context else 'No additional retrieved knowledge snippets were found.'}\n\n"
+                    f"Database results:\n{current_nl2sql_result}\n\n"
+                    f"Retrieved knowledge snippets (each snippet includes a Source):\n{current_rag_context if current_rag_context else 'No additional retrieved knowledge snippets were found.'}\n\n"
                     f"User question:\n{query}\n\n"
                     "Answer:\n"
                 )
-            elif rag_context:
+            elif current_rag_context:
                 augmented = (
                     "You are answering a user question using retrieved knowledge snippets.\n"
                     "Follow these rules:\n"
@@ -400,7 +403,7 @@ def build_app() -> FastAPI:
                     "- Do not say 'no relevant context found' because context IS provided below.\n"
                     "- If the context does not contain the answer, say what is missing and ask a brief clarifying question.\n\n"
                     f"Selected knowledge categories: {selected_cats if selected_cats else '[]'}\n\n"
-                    f"Retrieved context (each snippet includes a Source):\n{rag_context}\n\n"
+                    f"Retrieved context (each snippet includes a Source):\n{current_rag_context}\n\n"
                     f"User question:\n{query}\n\n"
                     "Answer:\n"
                 )

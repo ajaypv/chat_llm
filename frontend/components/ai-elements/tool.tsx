@@ -49,7 +49,7 @@ const statusLabels: Record<ToolPart["state"], string> = {
   "approval-requested": "Awaiting Approval",
   "approval-responded": "Responded",
   "input-available": "Running",
-  "input-streaming": "Pending",
+  "input-streaming": "Starting",
   "output-available": "Completed",
   "output-denied": "Denied",
   "output-error": "Error",

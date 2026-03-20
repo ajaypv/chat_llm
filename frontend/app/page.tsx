@@ -223,6 +223,7 @@ const parseBackendStatus = (
   | { kind: "status"; text: string }
   | { kind: "ignore" } => {
   const text = String(raw || "").trim();
+  console.debug("[chat-ui] parseBackendStatus raw", text);
 
   // Ignore generic model lifecycle logs (they are not tool usage).
   if (
@@ -240,23 +241,43 @@ const parseBackendStatus = (
   if (callMatch) {
     const toolName = callMatch[1];
     const argsRaw = callMatch[2];
-    // Backend uses Python dict formatting sometimes; normalize to JSON.
-    const normalized = argsRaw
-      .replace(/\bNone\b/g, "null")
-      .replace(/\bTrue\b/g, "true")
-      .replace(/\bFalse\b/g, "false")
-      .replace(/'/g, '"');
+    console.debug("[chat-ui] tool-call match", { toolName, argsRaw });
     try {
-      const args = JSON.parse(normalized) as Record<string, unknown>;
+      const args = JSON.parse(argsRaw) as Record<string, unknown>;
+      console.debug("[chat-ui] tool-call parsed json", { toolName, args });
       return { kind: "tool-call", toolName, args };
     } catch {
-      return { kind: "tool-call", toolName, args: { raw: argsRaw } };
+      const normalized = argsRaw
+        .replace(/\bNone\b/g, "null")
+        .replace(/\bTrue\b/g, "true")
+        .replace(/\bFalse\b/g, "false")
+        .replace(/'/g, '"');
+      try {
+        const args = JSON.parse(normalized) as Record<string, unknown>;
+        console.debug("[chat-ui] tool-call parsed normalized", {
+          toolName,
+          normalized,
+          args,
+        });
+        return { kind: "tool-call", toolName, args };
+      } catch {
+        console.warn("[chat-ui] tool-call parse failed", {
+          toolName,
+          argsRaw,
+          normalized,
+        });
+        return { kind: "tool-call", toolName, args: { raw: argsRaw } };
+      }
     }
   }
 
   // Example: "Tool semantic_search responded with: ..."
   const resultMatch = text.match(/^Tool\s+([^\s]+)\s+responded with:\s*([\s\S]*)$/);
   if (resultMatch) {
+    console.debug("[chat-ui] tool-result match", {
+      toolName: resultMatch[1],
+      resultPreview: String(resultMatch[2] || "").slice(0, 200),
+    });
     return {
       kind: "tool-result",
       toolName: resultMatch[1],
@@ -531,6 +552,10 @@ const Example = () => {
 
   const updateMessageContent = useCallback(
     (messageId: string, newContent: string) => {
+      console.debug("[chat-ui] updateMessageContent", {
+        messageId,
+        contentLength: newContent.length,
+      });
       setMessages((prev) =>
         prev.map((msg) => {
           if (msg.versions.some((v) => v.id === messageId)) {
@@ -550,6 +575,7 @@ const Example = () => {
 
   const appendToolEvent = useCallback(
     (messageId: string, toolEvent: ToolEvent) => {
+      console.debug("[chat-ui] appendToolEvent", { messageId, toolEvent });
       setMessages((prev) =>
         prev.map((msg) => {
           if (!msg.versions.some((v) => v.id === messageId)) {
@@ -557,9 +583,25 @@ const Example = () => {
           }
 
           const existing = msg.tools ?? [];
-          const idx = existing.findIndex((t) => t.toolCallId === toolEvent.toolCallId);
+          const idx = existing.findIndex(
+            (t) =>
+              t.toolCallId === toolEvent.toolCallId ||
+              (t.type === toolEvent.type &&
+                (t.state === "input-streaming" || t.state === "input-available"))
+          );
           const next = idx >= 0
-            ? existing.map((t, i) => (i === idx ? toolEvent : t))
+            ? existing.map((t, i) =>
+                i === idx
+                  ? {
+                      ...t,
+                      ...toolEvent,
+                      input:
+                        toolEvent.input && Object.keys(toolEvent.input).length
+                          ? toolEvent.input
+                          : t.input,
+                    }
+                  : t
+              )
             : [...existing, toolEvent];
 
           return { ...msg, tools: next };
@@ -627,6 +669,7 @@ const Example = () => {
 
           try {
             const chunk = JSON.parse(line) as ChatStreamChunk;
+            console.debug("[chat-ui] stream chunk", chunk);
 
             if (chunk.delta) {
               assembled += String(chunk.delta);
@@ -646,19 +689,24 @@ const Example = () => {
                   output: undefined,
                   errorText: undefined,
                 });
+
+                // Promote the tool to a visible running state if the backend does not
+                // emit a separate intermediate tool-progress event.
+                setTimeout(() => {
+                  appendToolEvent(messageId, {
+                    toolCallId,
+                    type: `tool-${parsed.toolName}`,
+                    state: "input-available",
+                    input: parsed.args,
+                    output: undefined,
+                    errorText: undefined,
+                  });
+                }, 120);
               } else if (parsed.kind === "tool-result") {
                 const existingId = toolIdByName.get(parsed.toolName);
-                const toolCallId = existingId ?? `${messageId}-tool-${parsed.toolName}`;
-
-                const existingInput =
-                  toolCallId &&
-                  (() => {
-                    const msg = messagesRef.current?.find((m: MessageType) =>
-                      m.versions.some((v: { id: string }) => v.id === messageId)
-                    );
-                    const tool = msg?.tools?.find((t: any) => t.toolCallId === toolCallId);
-                    return (tool?.input ?? {}) as Record<string, unknown>;
-                  })();
+                const toolCallId =
+                  existingId ??
+                  `${messageId}-tool-${parsed.toolName}`;
 
                 // Defer tool completion a moment so the UI can paint the
                 // "running" state (input-streaming) first.
@@ -668,7 +716,7 @@ const Example = () => {
                   toolCallId,
                   type: `tool-${parsed.toolName}`,
                   state: "output-available",
-                  input: existingInput || {},
+                  input: {},
                   output: parsed.result,
                   errorText: undefined,
                 });
@@ -1086,7 +1134,13 @@ const Example = () => {
                       {message.tools?.length ? (
                         <div className="not-prose mt-3 space-y-2">
                           {message.tools.map((t) => (
-                            <Tool key={t.toolCallId} defaultOpen={false}>
+                            <Tool
+                              key={t.toolCallId}
+                              defaultOpen={
+                                t.state === "input-streaming" ||
+                                t.state === "input-available"
+                              }
+                            >
                               <ToolHeader
                                 type={t.type as ToolUIPart["type"]}
                                 state={t.state}
