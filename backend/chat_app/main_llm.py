@@ -19,6 +19,16 @@ from chat_app.data_tools import get_outage_data, get_energy_data, get_industry_d
 
 logger = logging.getLogger(__name__)
 
+
+def _build_oci_chat_model() -> ChatOCIGenAI:
+    return ChatOCIGenAI(
+        model_id="xai.grok-4-fast-non-reasoning",
+        service_endpoint=os.getenv("SERVICE_ENDPOINT"),
+        compartment_id=os.getenv("COMPARTMENT_ID"),
+        model_kwargs={"temperature": 0.7},
+        auth_profile=os.getenv("AUTH_PROFILE"),
+    )
+
 class KnowledgeAssistantAgent:
     """General-purpose knowledge assistant backed by OCI GenAI and retrieval tools."""
 
@@ -33,13 +43,7 @@ class KnowledgeAssistantAgent:
 
     def _build_agent(self) -> CompiledStateGraph:
         """Build the general-purpose assistant agent."""
-        oci_llm = ChatOCIGenAI(
-            model_id="xai.grok-4-fast-non-reasoning",
-            service_endpoint=os.getenv("SERVICE_ENDPOINT"),
-            compartment_id=os.getenv("COMPARTMENT_ID"),
-            model_kwargs={"temperature":0.7},
-            auth_profile=os.getenv("AUTH_PROFILE"),
-        )
+        oci_llm = _build_oci_chat_model()
 
         return create_agent(
             model=oci_llm,
@@ -139,3 +143,29 @@ class KnowledgeAssistantAgent:
 
 # Backward-compatible alias for existing imports.
 OCIOutageEnergyLLM = KnowledgeAssistantAgent
+
+
+async def stream_augmented_response(query: str) -> AsyncIterable[str]:
+    """Stream plain text directly from the OCI chat model for an already-augmented prompt."""
+
+    llm = _build_oci_chat_model()
+    emitted_text = ""
+    async for chunk in llm.astream([HumanMessage(query)]):
+        text = getattr(chunk, "content", "")
+        if isinstance(text, list):
+            text = "".join(str(part) for part in text if part is not None)
+        text_value = str(text or "")
+        if not text_value:
+            continue
+
+        if text_value.startswith(emitted_text):
+            delta = text_value[len(emitted_text):]
+        else:
+            delta = text_value
+
+        if not delta:
+            continue
+
+        emitted_text = text_value
+        logger.info("stream_augmented_response emitted delta_len=%s", len(delta))
+        yield delta

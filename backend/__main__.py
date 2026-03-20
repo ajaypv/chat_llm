@@ -15,7 +15,7 @@ from uuid import uuid4
 from starlette.responses import StreamingResponse
 from langchain.messages import HumanMessage
 
-from chat_app.main_llm import KnowledgeAssistantAgent
+from chat_app.main_llm import KnowledgeAssistantAgent, stream_augmented_response
 from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_delete_job, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_delete_job, get_knowledge_job, update_knowledge_job, finish_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
 from langchain_oci import ChatOCIOpenAI
@@ -412,10 +412,48 @@ def build_app() -> FastAPI:
                     "Answer using general knowledge if appropriate, and clearly state that no retrieved context was available.\n"
                 )
 
-            async for chunk in llm.oci_stream(augmented, session_id=session_id, categories=categories_list):
-                yield json.dumps(chunk) + "\n"
+            assembled_response = ""
+            async for text_chunk in stream_augmented_response(augmented):
+                assembled_response += str(text_chunk)
+                logger.info("[rid=%s] /chat streaming delta_len=%s", request_id, len(str(text_chunk)))
+                yield json.dumps(
+                    {
+                        "type": "delta",
+                        "is_task_complete": False,
+                        "delta": str(text_chunk),
+                    }
+                ) + "\n"
 
-        return StreamingResponse(gen(), media_type="application/x-ndjson")
+            suggestions_json = None
+            try:
+                suggestions = await llm._suggestion_out.ainvoke(
+                    llm._out_query
+                    + f"\n\nContext for question generation:\n{assembled_response}"
+                )
+                if suggestions:
+                    suggestions_json = suggestions.model_dump_json()
+            except Exception:
+                logger.exception("[rid=%s] suggestion generation failed", request_id)
+
+            yield json.dumps(
+                {
+                    "type": "final",
+                    "is_task_complete": True,
+                    "content": assembled_response,
+                    "token_count": "0",
+                    "suggestions": suggestions_json,
+                }
+            ) + "\n"
+
+        return StreamingResponse(
+            gen(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     @app.post("/knowledge/upload")
     async def knowledge_upload(

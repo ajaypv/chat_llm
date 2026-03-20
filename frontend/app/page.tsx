@@ -686,8 +686,9 @@ const Example = () => {
             }
 
             if (chunk.is_task_complete) {
-              if (chunk.content) {
-                updateMessageContent(messageId, String(chunk.content));
+              if (chunk.content && !assembled) {
+                assembled = String(chunk.content);
+                updateMessageContent(messageId, assembled);
               }
 
               if (Array.isArray(chunk.sources)) {
