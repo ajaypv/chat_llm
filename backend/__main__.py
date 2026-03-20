@@ -418,7 +418,6 @@ def build_app() -> FastAPI:
             assembled_response = ""
             async for text_chunk in stream_augmented_response(augmented):
                 assembled_response += str(text_chunk)
-                logger.info("[rid=%s] /chat streaming delta_len=%s", request_id, len(str(text_chunk)))
                 yield json.dumps(
                     {
                         "type": "delta",

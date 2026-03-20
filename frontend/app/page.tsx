@@ -223,7 +223,6 @@ const parseBackendStatus = (
   | { kind: "status"; text: string }
   | { kind: "ignore" } => {
   const text = String(raw || "").trim();
-  console.debug("[chat-ui] parseBackendStatus raw", text);
 
   // Ignore generic model lifecycle logs (they are not tool usage).
   if (
@@ -241,10 +240,8 @@ const parseBackendStatus = (
   if (callMatch) {
     const toolName = callMatch[1];
     const argsRaw = callMatch[2];
-    console.debug("[chat-ui] tool-call match", { toolName, argsRaw });
     try {
       const args = JSON.parse(argsRaw) as Record<string, unknown>;
-      console.debug("[chat-ui] tool-call parsed json", { toolName, args });
       return { kind: "tool-call", toolName, args };
     } catch {
       const normalized = argsRaw
@@ -254,18 +251,8 @@ const parseBackendStatus = (
         .replace(/'/g, '"');
       try {
         const args = JSON.parse(normalized) as Record<string, unknown>;
-        console.debug("[chat-ui] tool-call parsed normalized", {
-          toolName,
-          normalized,
-          args,
-        });
         return { kind: "tool-call", toolName, args };
       } catch {
-        console.warn("[chat-ui] tool-call parse failed", {
-          toolName,
-          argsRaw,
-          normalized,
-        });
         return { kind: "tool-call", toolName, args: { raw: argsRaw } };
       }
     }
@@ -274,10 +261,6 @@ const parseBackendStatus = (
   // Example: "Tool semantic_search responded with: ..."
   const resultMatch = text.match(/^Tool\s+([^\s]+)\s+responded with:\s*([\s\S]*)$/);
   if (resultMatch) {
-    console.debug("[chat-ui] tool-result match", {
-      toolName: resultMatch[1],
-      resultPreview: String(resultMatch[2] || "").slice(0, 200),
-    });
     return {
       kind: "tool-result",
       toolName: resultMatch[1],
@@ -552,10 +535,6 @@ const Example = () => {
 
   const updateMessageContent = useCallback(
     (messageId: string, newContent: string) => {
-      console.debug("[chat-ui] updateMessageContent", {
-        messageId,
-        contentLength: newContent.length,
-      });
       setMessages((prev) =>
         prev.map((msg) => {
           if (msg.versions.some((v) => v.id === messageId)) {
@@ -575,7 +554,6 @@ const Example = () => {
 
   const appendToolEvent = useCallback(
     (messageId: string, toolEvent: ToolEvent) => {
-      console.debug("[chat-ui] appendToolEvent", { messageId, toolEvent });
       setMessages((prev) =>
         prev.map((msg) => {
           if (!msg.versions.some((v) => v.id === messageId)) {
@@ -669,7 +647,6 @@ const Example = () => {
 
           try {
             const chunk = JSON.parse(line) as ChatStreamChunk;
-            console.debug("[chat-ui] stream chunk", chunk);
 
             if (chunk.delta) {
               assembled += String(chunk.delta);

@@ -167,5 +167,4 @@ async def stream_augmented_response(query: str) -> AsyncIterable[str]:
             continue
 
         emitted_text = text_value
-        logger.info("stream_augmented_response emitted delta_len=%s", len(delta))
         yield delta
