@@ -39,6 +39,11 @@ def _build_schema_description(prefix: str) -> str:
         - Do NOT use INSERT/UPDATE/DELETE/MERGE/DDL/PLSQL.
         - Prefer FETCH FIRST N ROWS ONLY for limiting.
         - Do NOT wrap SQL in backticks or markdown fences.
+        - Use ONLY columns that are explicitly listed in the schema above.
+        - Do NOT invent columns such as review_count, rating, stars, score, popularity, or votes.
+        - If the user asks for "best" restaurants, interpret "best" using supported schema signals only.
+        - Supported ranking signals include number of available menu items, highest average menu price, or alphabetical order when no better signal is requested.
+        - For city-based "best restaurants" questions, prefer joining restaurants to menu items, filtering by city, grouping by restaurant, and ordering by COUNT(mi.id) DESC, then AVG(mi.price) DESC, then r.name ASC.
         """
     ).strip()
 
@@ -89,6 +94,34 @@ def _few_shot_examples(prefix: str) -> list[dict[str, str]]:
                 f"FROM {p}_RESTAURANT r\n"
                 f"JOIN {p}_MENU_ITEM mi ON mi.restaurant_id = r.id\n"
                 f"WHERE LOWER(r.city) = 'los angeles'"
+            ),
+        },
+        {
+            "q": "Show me the best restaurants in New York.",
+            "sql": (
+                f"SELECT r.name, r.address_line1, r.city, r.state, r.country, r.image_url,\n"
+                f"       COUNT(CASE WHEN mi.available = 'Y' THEN 1 END) AS available_menu_items,\n"
+                f"       ROUND(AVG(CASE WHEN mi.available = 'Y' THEN mi.price END), 2) AS avg_price\n"
+                f"FROM {p}_RESTAURANT r\n"
+                f"LEFT JOIN {p}_MENU_ITEM mi ON mi.restaurant_id = r.id\n"
+                f"WHERE LOWER(r.city) = 'new york'\n"
+                f"GROUP BY r.name, r.address_line1, r.city, r.state, r.country, r.image_url\n"
+                f"ORDER BY available_menu_items DESC, avg_price DESC NULLS LAST, r.name ASC\n"
+                f"FETCH FIRST 10 ROWS ONLY"
+            ),
+        },
+        {
+            "q": "What are the top restaurants in San Francisco?",
+            "sql": (
+                f"SELECT r.name, r.address_line1, r.city, r.state, r.country, r.image_url,\n"
+                f"       COUNT(CASE WHEN mi.available = 'Y' THEN 1 END) AS available_menu_items,\n"
+                f"       ROUND(AVG(CASE WHEN mi.available = 'Y' THEN mi.price END), 2) AS avg_price\n"
+                f"FROM {p}_RESTAURANT r\n"
+                f"LEFT JOIN {p}_MENU_ITEM mi ON mi.restaurant_id = r.id\n"
+                f"WHERE LOWER(r.city) = 'san francisco'\n"
+                f"GROUP BY r.name, r.address_line1, r.city, r.state, r.country, r.image_url\n"
+                f"ORDER BY available_menu_items DESC, avg_price DESC NULLS LAST, r.name ASC\n"
+                f"FETCH FIRST 10 ROWS ONLY"
             ),
         },
     ]
@@ -199,7 +232,7 @@ async def nl2sql_tool(question: str) -> str:
                 image_cell = ""
                 if image_url not in (None, ""):
                     u = str(image_url).strip()
-                    image_cell = f"[view]({u})"
+                    image_cell = f"![{str(item_name or 'menu item').strip()}]({u})"
 
                 table_rows.append(
                     "| "

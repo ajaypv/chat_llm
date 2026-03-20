@@ -345,9 +345,6 @@ def build_app() -> FastAPI:
         except Exception as e:
             logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
 
-        if use_nl2sql and nl2sql_result:
-            rag_context = ""
-
         logger.info(
             "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
             request_id,
@@ -369,18 +366,28 @@ def build_app() -> FastAPI:
             selected_cats = categories_list
             if nl2sql_result:
                 augmented = (
-                    "You are answering a user question using database query results.\n"
-                    "Use the results below as the source of truth.\n"
+                    "You are answering a user question using database query results and retrieved knowledge snippets.\n"
+                    "Use the database results below as the source of truth for structured facts such as restaurant names, addresses, coordinates, menu items, prices, and availability.\n"
+                    "Use the retrieved knowledge snippets to enrich the answer with cuisine profile, what customers like, menu highlights, and review-style qualitative details when available.\n"
                     "Respond in clear markdown.\n"
                     "Start with a short direct answer to the user's question.\n"
                     "When the question asks for menu items, restaurants, comparisons, or 'both restaurants', include a markdown table.\n"
                     "For menu-style questions, prefer a table with columns like: Restaurant | Item | Category | Price | Available.\n"
-                    "If the tool result already contains a markdown table, preserve/use that table and add a short summary below it.\n"
+                    "For menu-style questions, append a Mermaid flowchart code block at the end of the response.\n"
+                    "The Mermaid block must be fenced as ```mermaid and should use a simple flowchart that starts from the restaurant name and branches to each menu item.\n"
+                    "For each menu item, include whether it is Vegan, Veg, or Non-Veg when that can be reasonably inferred from the item name or description; otherwise label it Unknown.\n"
+                    "Keep Mermaid node labels short and frontend-friendly, for example: Restaurant --> Item --> Vegan, Veg, or Non-Veg.\n"
+                    "If the question is about restaurants in a city or area, first show a markdown table for the restaurant details. Prefer columns like: Restaurant | Address | City | State | Image.\n"
+                    "After the table, add a separate section titled 'Customer Reviews and Highlights' and summarize each restaurant using the retrieved knowledge snippets.\n"
+                    "In that section, include cuisine profile, what customers like, and notable menu items when available.\n"
+                    "If the tool result already contains a markdown table, preserve or reuse that table and add a short summary below it.\n"
+                    "Do not say that no reviews, menus, or additional details are available if the retrieved knowledge snippets contain them.\n"
                     "Then provide a concise explanation of what the results mean.\n"
                     "If useful, summarize the best matches as bullet points.\n"
                     "If the results are empty, say no matching records were found.\n"
                     "Do not dump raw tool output without explanation.\n\n"
                     f"Database results:\n{nl2sql_result}\n\n"
+                    f"Retrieved knowledge snippets (each snippet includes a Source):\n{rag_context if rag_context else 'No additional retrieved knowledge snippets were found.'}\n\n"
                     f"User question:\n{query}\n\n"
                     "Answer:\n"
                 )
