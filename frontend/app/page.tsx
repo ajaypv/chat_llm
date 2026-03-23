@@ -329,6 +329,7 @@ const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000
 
 const SELECTED_CATEGORIES_STORAGE_KEY = "rag.selectedCategories";
 const SELECTED_MODEL_STORAGE_KEY = "chat.selectedModel";
+const CHAT_SESSION_STORAGE_KEY = "chat.sessionId";
 
 const delay = (ms: number): Promise<void> =>
   // eslint-disable-next-line promise/avoid-new -- setTimeout requires a new Promise
@@ -469,6 +470,7 @@ const Example = () => {
   );
   const [model, setModel] = useState<string>(models[0].id);
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const [chatSessionId, setChatSessionId] = useState<string>(() => `session-${Date.now()}`);
   const [text, setText] = useState<string>("");
   const [useWebSearch, setUseWebSearch] = useState<boolean>(false);
   const [status, setStatus] = useState<
@@ -526,6 +528,17 @@ const Example = () => {
       const raw = localStorage.getItem(SELECTED_MODEL_STORAGE_KEY);
       if (raw) {
         setModel(raw);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CHAT_SESSION_STORAGE_KEY);
+      if (raw) {
+        setChatSessionId(raw);
       }
     } catch {
       // ignore
@@ -622,6 +635,14 @@ const Example = () => {
       // ignore
     }
   }, [model]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_SESSION_STORAGE_KEY, chatSessionId);
+    } catch {
+      // ignore
+    }
+  }, [chatSessionId]);
 
   const toggleCategory = useCallback((cat: string) => {
     const c = String(cat).trim();
@@ -730,7 +751,7 @@ const Example = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: content,
-          session_id: String(Date.now()),
+          session_id: chatSessionId,
           model,
           categories: selectedCategories,
           top_k: 10,
@@ -869,7 +890,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
+    [appendToolEvent, chatSessionId, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
   );
 
   const addUserMessage = useCallback(
@@ -1015,6 +1036,7 @@ const Example = () => {
     recognitionRef.current = null;
     speechBaseTextRef.current = "";
     speechFinalTextRef.current = "";
+    setChatSessionId(`session-${Date.now()}`);
     setIsListening(false);
     setText("");
     setMessages(initialMessages);
