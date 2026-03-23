@@ -101,6 +101,7 @@ import {
   MenuIcon,
   MicIcon,
   MicOffIcon,
+  PlusIcon,
   PanelLeftCloseIcon,
   SparklesIcon,
 } from "lucide-react";
@@ -891,6 +892,20 @@ const Example = () => {
     setNavOpen(false);
   }, []);
 
+  const handleNewConversation = useCallback(() => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    speechBaseTextRef.current = "";
+    speechFinalTextRef.current = "";
+    setIsListening(false);
+    setText("");
+    setMessages(initialMessages);
+    setFollowups([]);
+    setStatus("ready");
+    setStreamingMessageId(null);
+    closeNav();
+  }, [closeNav]);
+
   const handleModelSelect = useCallback((modelId: string) => {
     setModel(modelId);
     setModelSelectorOpen(false);
@@ -950,6 +965,14 @@ const Example = () => {
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Move between chat, knowledge management, and retrieval docs without the header collapsing.
             </p>
+            <Button
+              className="mt-4 w-full justify-center rounded-xl bg-[#C74634] text-white hover:bg-[#B33C2D]"
+              onClick={handleNewConversation}
+              type="button"
+            >
+              <PlusIcon className="size-4" />
+              New conversation
+            </Button>
           </div>
         </div>
 
@@ -1016,12 +1039,23 @@ const Example = () => {
             </div>
           </div>
 
-          <a
-            href="/rag"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
-          >
-            How this project works
-          </a>
+          <div className="flex items-center gap-2">
+            <Button
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+              onClick={handleNewConversation}
+              type="button"
+              variant="ghost"
+            >
+              <PlusIcon className="size-4" />
+              New chat
+            </Button>
+            <a
+              href="/rag"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              How this project works
+            </a>
+          </div>
         </div>
       </header>
 
