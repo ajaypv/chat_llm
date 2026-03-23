@@ -16,6 +16,11 @@ from starlette.responses import StreamingResponse
 from langchain.messages import HumanMessage
 
 from chat_app.main_llm import KnowledgeAssistantAgent, stream_augmented_response
+from chat_app.model_registry import (
+    DEFAULT_CHAT_MODEL,
+    SUPPORTED_CHAT_MODELS,
+    is_supported_chat_model,
+)
 from database.connections import RAGDBConnection, ensure_knowledge_tables, create_knowledge_delete_job, create_knowledge_file, create_knowledge_job, add_file_to_job, get_knowledge_delete_job, get_knowledge_job, update_knowledge_job, finish_knowledge_job
 from chat_app.knowledge_worker import run_knowledge_worker
 from langchain_oci import ChatOCIOpenAI
@@ -160,6 +165,16 @@ def build_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/models")
+    async def list_models():
+        return {
+            "default": DEFAULT_CHAT_MODEL,
+            "models": [
+                {"id": model_id, **metadata}
+                for model_id, metadata in SUPPORTED_CHAT_MODELS.items()
+            ],
+        }
+
     @app.post("/chat")
     async def chat(payload: dict):
         # keeping simple JSON input: {"query": "...", "session_id": "..."}
@@ -180,13 +195,18 @@ def build_app() -> FastAPI:
             categories_list = [str(categories).strip().lower()] if str(categories).strip() else []
 
         session_id = payload.get("session_id") or "local"
+        model_id = str(payload.get("model") or DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL
         top_k = int(payload.get("top_k") or 10)
         use_web_search = bool(payload.get("use_web_search"))
 
+        if not is_supported_chat_model(model_id):
+            raise HTTPException(status_code=400, detail="unsupported model")
+
         logger.info(
-            "[rid=%s] /chat: session_id=%s query_len=%s top_k=%s categories=%s use_web_search=%s",
+            "[rid=%s] /chat: session_id=%s model_id=%s query_len=%s top_k=%s categories=%s use_web_search=%s",
             request_id,
             session_id,
+            model_id,
             len(query),
             top_k,
             categories_list,
@@ -416,7 +436,10 @@ def build_app() -> FastAPI:
                 )
 
             assembled_response = ""
-            async for text_chunk in stream_augmented_response(augmented):
+            async for text_chunk in stream_augmented_response(
+                augmented,
+                model_id=model_id,
+            ):
                 assembled_response += str(text_chunk)
                 yield json.dumps(
                     {

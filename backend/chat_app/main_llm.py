@@ -16,16 +16,34 @@ from core.common_struct import SUGGESTION_QUERY
 from chat_app.rag_tool import semantic_search
 from chat_app.nl2sql_tool import nl2sql_tool
 from chat_app.data_tools import get_outage_data, get_energy_data, get_industry_data
+from chat_app.model_registry import DEFAULT_CHAT_MODEL
 
 logger = logging.getLogger(__name__)
 
 
-def _build_oci_chat_model() -> ChatOCIGenAI:
+def _build_oci_chat_model(model_id: str = DEFAULT_CHAT_MODEL) -> ChatOCIGenAI:
+    model_kwargs: dict[str, Any] = {}
+    configured_temperature = os.getenv("CHAT_MODEL_TEMPERATURE")
+    if configured_temperature not in (None, ""):
+        try:
+            model_kwargs["temperature"] = float(configured_temperature)
+        except ValueError:
+            logger.warning(
+                "Ignoring invalid CHAT_MODEL_TEMPERATURE=%s; using provider defaults",
+                configured_temperature,
+            )
+
+    logger.info(
+        "Creating OCI chat model client: model_id=%s model_kwargs=%s",
+        model_id,
+        model_kwargs,
+    )
+
     return ChatOCIGenAI(
-        model_id="xai.grok-4-fast-non-reasoning",
+        model_id=model_id,
         service_endpoint=os.getenv("SERVICE_ENDPOINT"),
         compartment_id=os.getenv("COMPARTMENT_ID"),
-        model_kwargs={"temperature": 0.7},
+        model_kwargs=model_kwargs,
         auth_profile=os.getenv("AUTH_PROFILE"),
     )
 
@@ -34,7 +52,8 @@ class KnowledgeAssistantAgent:
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain", "text/event-stream"]
 
-    def __init__(self):
+    def __init__(self, model_id: str = DEFAULT_CHAT_MODEL):
+        self._model_id = model_id
         self._agent = self._build_agent()
         self._user_id = "remote_llm"
         self._suggestion_out = SuggestionModel().build_suggestion_model()
@@ -43,7 +62,7 @@ class KnowledgeAssistantAgent:
 
     def _build_agent(self) -> CompiledStateGraph:
         """Build the general-purpose assistant agent."""
-        oci_llm = _build_oci_chat_model()
+        oci_llm = _build_oci_chat_model(self._model_id)
 
         return create_agent(
             model=oci_llm,
@@ -145,10 +164,13 @@ class KnowledgeAssistantAgent:
 OCIOutageEnergyLLM = KnowledgeAssistantAgent
 
 
-async def stream_augmented_response(query: str) -> AsyncIterable[str]:
+async def stream_augmented_response(
+    query: str,
+    model_id: str = DEFAULT_CHAT_MODEL,
+) -> AsyncIterable[str]:
     """Stream plain text directly from the OCI chat model for an already-augmented prompt."""
 
-    llm = _build_oci_chat_model()
+    llm = _build_oci_chat_model(model_id=model_id)
     emitted_text = ""
     async for chunk in llm.astream([HumanMessage(query)]):
         text = getattr(chunk, "content", "")

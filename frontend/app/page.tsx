@@ -140,37 +140,79 @@ const models = [
   {
     chef: "OpenAI",
     chefSlug: "openai",
-    id: "gpt-4o",
-    name: "GPT-4o",
-    providers: ["openai", "azure"],
+    id: "openai.gpt-5.2",
+    name: "GPT-5.2",
+    providers: ["openai"],
   },
   {
     chef: "OpenAI",
     chefSlug: "openai",
-    id: "gpt-4o-mini",
-    name: "GPT-4o Mini",
-    providers: ["openai", "azure"],
+    id: "openai.gpt-5.2-2025-12-11",
+    name: "GPT-5.2 2025-12-11",
+    providers: ["openai"],
   },
   {
-    chef: "Anthropic",
-    chefSlug: "anthropic",
-    id: "claude-opus-4-20250514",
-    name: "Claude 4 Opus",
-    providers: ["anthropic", "azure", "google", "amazon-bedrock"],
+    chef: "OpenAI",
+    chefSlug: "openai",
+    id: "openai.gpt-5.2-chat-latest",
+    name: "GPT-5.2 Chat Latest",
+    providers: ["openai"],
   },
   {
-    chef: "Anthropic",
-    chefSlug: "anthropic",
-    id: "claude-sonnet-4-20250514",
-    name: "Claude 4 Sonnet",
-    providers: ["anthropic", "azure", "google", "amazon-bedrock"],
+    chef: "OpenAI",
+    chefSlug: "openai",
+    id: "openai.gpt-5.2-pro",
+    name: "GPT-5.2 Pro",
+    providers: ["openai"],
   },
   {
-    chef: "Google",
-    chefSlug: "google",
-    id: "gemini-2.0-flash-exp",
-    name: "Gemini 2.0 Flash",
-    providers: ["google"],
+    chef: "OpenAI",
+    chefSlug: "openai",
+    id: "openai.gpt-5.2-pro-2025-12-11",
+    name: "GPT-5.2 Pro 2025-12-11",
+    providers: ["openai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-4",
+    name: "Grok 4",
+    providers: ["xai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-4-1-fast-non-reasoning",
+    name: "Grok 4.1 Fast Non-Reasoning",
+    providers: ["xai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-4-1-fast-reasoning",
+    name: "Grok 4.1 Fast Reasoning",
+    providers: ["xai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-4-fast-non-reasoning",
+    name: "Grok 4 Fast Non-Reasoning",
+    providers: ["xai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-4-fast-reasoning",
+    name: "Grok 4 Fast Reasoning",
+    providers: ["xai"],
+  },
+  {
+    chef: "xAI",
+    chefSlug: "xai",
+    id: "xai.grok-code-fast-1",
+    name: "Grok Code Fast 1",
+    providers: ["xai"],
   },
 ];
 
@@ -300,6 +342,7 @@ const isWebUrl = (value: string): boolean => /^https?:\/\//i.test(String(value |
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
 
 const SELECTED_CATEGORIES_STORAGE_KEY = "rag.selectedCategories";
+const SELECTED_MODEL_STORAGE_KEY = "chat.selectedModel";
 
 const delay = (ms: number): Promise<void> =>
   // eslint-disable-next-line promise/avoid-new -- setTimeout requires a new Promise
@@ -307,7 +350,12 @@ const delay = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-const chefs = ["OpenAI", "Anthropic", "Google"];
+type ModelOption = {
+  family: string;
+  id: string;
+  name: string;
+  provider: string;
+};
 
 const primaryNavItems = [
   {
@@ -425,6 +473,14 @@ const ModelItem = ({
 
 const Example = () => {
   const [navOpen, setNavOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(
+    models.map((item) => ({
+      family: item.chef,
+      id: item.id,
+      name: item.name,
+      provider: item.chefSlug,
+    }))
+  );
   const [model, setModel] = useState<string>(models[0].id);
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [text, setText] = useState<string>("");
@@ -480,6 +536,68 @@ const Example = () => {
   }, []);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SELECTED_MODEL_STORAGE_KEY);
+      if (raw) {
+        setModel(raw);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/models`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          default?: string;
+          models?: Array<{
+            family?: unknown;
+            id?: unknown;
+            name?: unknown;
+            provider?: unknown;
+          }>;
+        };
+        if (cancelled || !Array.isArray(data.models) || data.models.length === 0) {
+          return;
+        }
+
+        const nextModels = data.models
+          .map((item) => ({
+            family: String(item.family ?? "Other"),
+            id: String(item.id ?? "").trim(),
+            name: String(item.name ?? item.id ?? "").trim(),
+            provider: String(item.provider ?? "other").trim(),
+          }))
+          .filter((item) => item.id);
+
+        if (!nextModels.length) {
+          return;
+        }
+
+        setAvailableModels(nextModels);
+        setModel((currentModel) => {
+          const supported = nextModels.some((item) => item.id === currentModel);
+          if (supported) {
+            return currentModel;
+          }
+          return String(data.default ?? nextModels[0]?.id ?? currentModel);
+        });
+      } catch {
+        // ignore and keep fallback list
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -511,6 +629,14 @@ const Example = () => {
     }
   }, [selectedCategories]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, model);
+    } catch {
+      // ignore
+    }
+  }, [model]);
+
   const toggleCategory = useCallback((cat: string) => {
     const c = String(cat).trim();
     if (!c) return;
@@ -530,8 +656,13 @@ const Example = () => {
   }, [selectedCategories]);
 
   const selectedModelData = useMemo(
-    () => models.find((m) => m.id === model),
-    [model]
+    () => availableModels.find((m) => m.id === model),
+    [availableModels, model]
+  );
+
+  const modelFamilies = useMemo(
+    () => Array.from(new Set(availableModels.map((item) => item.family))),
+    [availableModels]
   );
 
   const updateMessageContent = useCallback(
@@ -614,6 +745,7 @@ const Example = () => {
         body: JSON.stringify({
           query: content,
           session_id: String(Date.now()),
+          model,
           categories: selectedCategories,
           top_k: 10,
           use_web_search: useWebSearch,
@@ -751,7 +883,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
+    [appendToolEvent, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
   );
 
   const addUserMessage = useCallback(
@@ -1237,8 +1369,8 @@ const Example = () => {
                     >
                       <ModelSelectorTrigger asChild>
                         <PromptInputButton className="border border-slate-200/70 bg-transparent text-slate-800 shadow-none hover:bg-slate-100/40">
-                          {selectedModelData?.chefSlug && (
-                            <ModelSelectorLogo provider={selectedModelData.chefSlug} />
+                          {selectedModelData?.provider && (
+                            <ModelSelectorLogo provider={selectedModelData.provider} />
                           )}
                           {selectedModelData?.name && (
                             <ModelSelectorName>{selectedModelData.name}</ModelSelectorName>
@@ -1251,15 +1383,21 @@ const Example = () => {
                           <ModelSelectorEmpty>
                             No models found.
                           </ModelSelectorEmpty>
-                          {chefs.map((chef) => (
-                            <ModelSelectorGroup heading={chef} key={chef}>
-                              {models
-                                .filter((m) => m.chef === chef)
+                          {modelFamilies.map((family) => (
+                            <ModelSelectorGroup heading={family} key={family}>
+                              {availableModels
+                                .filter((m) => m.family === family)
                                 .map((m) => (
                                   <ModelItem
                                     isSelected={model === m.id}
                                     key={m.id}
-                                    m={m}
+                                    m={{
+                                      chef: m.family,
+                                      chefSlug: m.provider,
+                                      id: m.id,
+                                      name: m.name,
+                                      providers: [m.provider],
+                                    }}
                                     onSelect={handleModelSelect}
                                   />
                                 ))}
