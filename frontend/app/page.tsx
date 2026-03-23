@@ -104,6 +104,7 @@ import {
   PlusIcon,
   PanelLeftCloseIcon,
   SparklesIcon,
+  UserRoundIcon,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -356,6 +357,12 @@ const primaryNavItems = [
     href: "/knowledge",
     icon: LibraryIcon,
     label: "Knowledge",
+  },
+  {
+    description: "Save goals, interests, and source links",
+    href: "/profile",
+    icon: UserRoundIcon,
+    label: "Profile",
   },
   {
     description: "See retrieval flow and project details",
