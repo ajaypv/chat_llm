@@ -16,16 +16,6 @@ SUPPORTED_CHAT_MODELS = {
         "provider": "openai",
         "family": "OpenAI",
     },
-    "openai.gpt-5.2-pro": {
-        "name": "GPT-5.2 Pro",
-        "provider": "openai",
-        "family": "OpenAI",
-    },
-    "openai.gpt-5.2-pro-2025-12-11": {
-        "name": "GPT-5.2 Pro 2025-12-11",
-        "provider": "openai",
-        "family": "OpenAI",
-    },
     "xai.grok-4": {
         "name": "Grok 4",
         "provider": "xai",

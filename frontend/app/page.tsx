@@ -159,20 +159,6 @@ const models = [
     providers: ["openai"],
   },
   {
-    chef: "OpenAI",
-    chefSlug: "openai",
-    id: "openai.gpt-5.2-pro",
-    name: "GPT-5.2 Pro",
-    providers: ["openai"],
-  },
-  {
-    chef: "OpenAI",
-    chefSlug: "openai",
-    id: "openai.gpt-5.2-pro-2025-12-11",
-    name: "GPT-5.2 Pro 2025-12-11",
-    providers: ["openai"],
-  },
-  {
     chef: "xAI",
     chefSlug: "xai",
     id: "xai.grok-4",
