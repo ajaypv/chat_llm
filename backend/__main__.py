@@ -32,6 +32,61 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _should_use_semantic_search(query: str, categories: list[str]) -> bool:
+    text = str(query or "").strip()
+    if not text:
+        return False
+
+    if categories:
+        return True
+
+    lowered = text.lower()
+    short_chat_inputs = {
+        "hi",
+        "hey",
+        "hello",
+        "hey hi",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+    }
+    if lowered in short_chat_inputs:
+        return False
+
+    retrieval_signals = (
+        "based on",
+        "from the knowledge base",
+        "from the docs",
+        "from the document",
+        "in the document",
+        "in the docs",
+        "according to",
+        "knowledge base",
+        "search the docs",
+        "search knowledge",
+        "find in",
+        "look up",
+        "what does the document say",
+        "restaurant",
+        "restaurants",
+        "menu",
+        "menus",
+        "dish",
+        "dishes",
+        "cuisine",
+        "review",
+        "reviews",
+        "nutrition",
+        "healthy",
+        "food",
+    )
+    return any(signal in lowered for signal in retrieval_signals)
+
+
 def _build_oci_web_search_client() -> ChatOCIOpenAI:
     if not os.getenv("OCI_OPENAI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError(
@@ -287,8 +342,8 @@ def build_app() -> FastAPI:
 
             return StreamingResponse(gen_web_search(), media_type="application/x-ndjson")
 
-        # Always run RAG retrieval server-side so the experience doesn't depend on
-        # whether the model decides to invoke tools.
+        use_semantic_search = _should_use_semantic_search(query, categories_list)
+
         rag_context: str = ""
         nl2sql_result: str = ""
 
@@ -323,6 +378,30 @@ def build_app() -> FastAPI:
             any(k in q_lower for k in restaurant_attribute_keywords)
             and any(k in q_lower for k in restaurant_entity_keywords)
         )
+        use_agentic_chat = not use_nl2sql and not categories_list and not use_semantic_search
+
+        if use_agentic_chat:
+            logger.info(
+                "[rid=%s] /chat: routing to agentic chat path (model decides tool usage)",
+                request_id,
+            )
+
+            async def gen_agentic():
+                agent = KnowledgeAssistantAgent(model_id=model_id)
+                async for chunk in agent.oci_stream(query, session_id=session_id):
+                    import json
+
+                    yield json.dumps(chunk) + "\n"
+
+            return StreamingResponse(
+                gen_agentic(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
 
         async def gen():
             import json
@@ -351,30 +430,37 @@ def build_app() -> FastAPI:
                         {"updates": "Tool nl2sql_tool responded with:\n" + str(current_nl2sql_result)}
                     ) + "\n"
 
-            yield json.dumps(
-                {
-                    "updates": "Model calling tool: semantic_search with args "
-                    + json.dumps({"query": query, "top_k": top_k, "categories": categories_list})
-                }
-            ) + "\n"
+            if use_semantic_search:
+                yield json.dumps(
+                    {
+                        "updates": "Model calling tool: semantic_search with args "
+                        + json.dumps({"query": query, "top_k": top_k, "categories": categories_list})
+                    }
+                ) + "\n"
 
-            try:
-                from chat_app.rag_tool import semantic_search_raw
+                try:
+                    from chat_app.rag_tool import semantic_search_raw
 
-                current_rag_context = await semantic_search_raw(
-                    query=query,
-                    top_k=top_k,
-                    categories=categories_list,
-                    request_id=request_id,
+                    current_rag_context = await semantic_search_raw(
+                        query=query,
+                        top_k=top_k,
+                        categories=categories_list,
+                        request_id=request_id,
+                    )
+                except Exception as e:
+                    logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
+                    current_rag_context = ""
+            else:
+                logger.info(
+                    "[rid=%s] /chat: skipping semantic_search for conversational query",
+                    request_id,
                 )
-            except Exception as e:
-                logger.warning("[rid=%s] semantic_search failed: %s", request_id, str(e))
-                current_rag_context = ""
 
             logger.info(
-                "[rid=%s] /chat: nl2sql_selected=%s nl2sql_present=%s rag_context_present=%s",
+                "[rid=%s] /chat: nl2sql_selected=%s semantic_search_selected=%s nl2sql_present=%s rag_context_present=%s",
                 request_id,
                 use_nl2sql,
+                use_semantic_search,
                 bool(current_nl2sql_result),
                 bool(current_rag_context and "No relevant documents found" not in current_rag_context),
             )
@@ -429,10 +515,13 @@ def build_app() -> FastAPI:
                 )
             else:
                 augmented = (
-                    "No retrieved knowledge context was found for this query.\n"
-                    f"Selected knowledge categories: {selected_cats if selected_cats else '[]'}\n\n"
-                    f"User question:\n{query}\n\n"
-                    "Answer using general knowledge if appropriate, and clearly state that no retrieved context was available.\n"
+                    "You are a helpful conversational assistant.\n"
+                    "Respond naturally and directly to the user's message.\n"
+                    "Do not mention retrieval, missing documents, knowledge base context, or tool usage unless the user explicitly asks about them.\n"
+                    "If the user's message is casual small talk, reply conversationally and briefly.\n"
+                    "If the user asks for factual help that does not require the knowledge base, answer normally using general knowledge.\n\n"
+                    f"User message:\n{query}\n\n"
+                    "Assistant reply:\n"
                 )
 
             assembled_response = ""

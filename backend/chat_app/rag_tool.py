@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+DEFAULT_MAX_DISTANCE = float(os.getenv("SEMANTIC_SEARCH_MAX_DISTANCE", "0.58"))
 
 def build_context_snippet(results: list[dict]) -> str:
     """Format retrieved chunks for prompt context."""
@@ -137,6 +138,26 @@ async def semantic_search_raw(
             ]
             logger.info("[rid=%s] semantic_search_raw: top_hits=%s", rid, preview)
 
+            filtered_results = [
+                row
+                for row in results
+                if row.get("distance") is not None and float(row["distance"]) <= DEFAULT_MAX_DISTANCE
+            ]
+            logger.info(
+                "[rid=%s] semantic_search_raw: filtered_hits=%s max_distance=%s",
+                rid,
+                len(filtered_results),
+                DEFAULT_MAX_DISTANCE,
+            )
+            if not filtered_results:
+                logger.info(
+                    "[rid=%s] semantic_search_raw: no hits passed similarity threshold",
+                    rid,
+                )
+                return "No relevant documents found."
+
+            results = filtered_results
+
         return build_context_snippet(results)
     except Exception:
         rid = request_id or "-"
@@ -145,8 +166,9 @@ async def semantic_search_raw(
 
 @tool()
 async def semantic_search(query: str, top_k: int = 10, categories: list[str] | None = None) -> str:
-    """Perform semantic search with cosine similarity to find relevant documents:
-    [epa_actions_for_outages (US), fema_outage_flyer (US), general_disaster_manual (MEX)]
+    """Retrieve knowledge-base passages only when the user is explicitly asking for document-grounded information.
+
+    Do not use this for greetings, small talk, vague follow-ups, or general conversation.
     """
     
     return await semantic_search_raw(query=query, top_k=top_k, categories=categories)
