@@ -9,6 +9,13 @@ cd chat_llm/backend
 uv sync
 ```
 
+If you want the profile-based `update me` flow that crawls saved web pages, install Playwright browser binaries too:
+
+```powershell
+cd chat_llm/backend
+uv run python -m playwright install
+```
+
 ## Run server (single entrypoint)
 
 This backend is started via `__main__.py`:
@@ -21,6 +28,10 @@ uv run --project . python .\__main__.py --host 0.0.0.0 --port 8000
 Health check:
 
 - http://localhost:8000/health
+
+Models endpoint:
+
+- http://localhost:8000/models
 
 ## Knowledge (PDF upload + embeddings)
 
@@ -44,7 +55,31 @@ Job status:
 
 - `GET /knowledge/jobs/{job_id}`
 
+## Profile-based updates
+
+The backend supports a profile-aware update flow for prompts like:
+
+- `update me`
+- `latest news`
+- `what's new`
+
+The frontend sends the user's saved profile in the `/chat` payload:
+
+- goals
+- interests
+- saved source links
+
+When those links are present, the backend can use Crawl4AI to fetch source content and then generate a personalized update explaining how those developments affect the user's goals and interests.
+
+This flow depends on:
+
+- `crawl4ai`
+- Playwright browser binaries installed locally
+
+If the browser binaries are not installed, the feature returns a setup guidance message instead of crashing.
+
 ## Notes
 
 - Configuration is via `.env` (OCI GenAI + DB wallet settings).
 - RAG PDFs are stored in `core/rag_docs/`.
+- Crawl4AI setup requires Playwright browsers via `uv run python -m playwright install`.

@@ -16,6 +16,11 @@ from starlette.responses import StreamingResponse
 from langchain.messages import HumanMessage
 
 from chat_app.main_llm import KnowledgeAssistantAgent, stream_augmented_response
+from chat_app.profile_updates import (
+    build_profile_images_markdown,
+    build_profile_update_prompt,
+    fetch_profile_link_updates,
+)
 from chat_app.model_registry import (
     DEFAULT_CHAT_MODEL,
     SUPPORTED_CHAT_MODELS,
@@ -249,6 +254,23 @@ def build_app() -> FastAPI:
         else:
             categories_list = [str(categories).strip().lower()] if str(categories).strip() else []
 
+        profile_payload = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        profile_goals = [
+            str(item).strip()
+            for item in (profile_payload.get("goals") or [])
+            if str(item).strip()
+        ]
+        profile_interests = [
+            str(item).strip()
+            for item in (profile_payload.get("interests") or [])
+            if str(item).strip()
+        ]
+        profile_links = [
+            item
+            for item in (profile_payload.get("links") or [])
+            if isinstance(item, dict) and str(item.get("url") or "").strip()
+        ]
+
         session_id = payload.get("session_id") or "local"
         model_id = str(payload.get("model") or DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL
         top_k = int(payload.get("top_k") or 10)
@@ -258,7 +280,7 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="unsupported model")
 
         logger.info(
-            "[rid=%s] /chat: session_id=%s model_id=%s query_len=%s top_k=%s categories=%s use_web_search=%s",
+            "[rid=%s] /chat: session_id=%s model_id=%s query_len=%s top_k=%s categories=%s use_web_search=%s profile_links=%s",
             request_id,
             session_id,
             model_id,
@@ -266,7 +288,95 @@ def build_app() -> FastAPI:
             top_k,
             categories_list,
             use_web_search,
+            len(profile_links),
         )
+
+        lowered_query = query.lower()
+        wants_profile_update = any(
+            phrase in lowered_query
+            for phrase in (
+                "update me",
+                "latest update",
+                "latest news",
+                "what's new",
+                "whats new",
+                "recent updates",
+            )
+        ) and bool(profile_links)
+
+        if wants_profile_update:
+            async def gen_profile_updates():
+                import json
+
+                yield json.dumps(
+                    {
+                        "updates": "Model calling tool: profile_web_crawl with args "
+                        + json.dumps({"links": [link.get("url") for link in profile_links[:3]]})
+                    }
+                ) + "\n"
+
+                crawled_updates = await fetch_profile_link_updates(
+                    profile_links,
+                    request_id=request_id,
+                )
+                crawled_summary = "\n\n".join(
+                    f"{item['label']} ({item['url']})" for item in crawled_updates
+                ) or "No crawlable updates were returned from the saved links."
+
+                yield json.dumps(
+                    {
+                        "updates": "Tool profile_web_crawl responded with:\n" + crawled_summary,
+                    }
+                ) + "\n"
+
+                prompt = build_profile_update_prompt(
+                    query=query,
+                    goals=profile_goals,
+                    interests=profile_interests,
+                    crawled_updates=crawled_updates,
+                )
+
+                assembled_response = ""
+                async for text_chunk in stream_augmented_response(
+                    prompt,
+                    model_id=model_id,
+                ):
+                    assembled_response += str(text_chunk)
+                    yield json.dumps(
+                        {
+                            "type": "delta",
+                            "is_task_complete": False,
+                            "delta": str(text_chunk),
+                        }
+                    ) + "\n"
+
+                images_markdown = build_profile_images_markdown(crawled_updates)
+                final_content = assembled_response
+                if images_markdown:
+                    final_content = f"{assembled_response.rstrip()}\n\n---\n\n## Visual references\n\n{images_markdown}\n"
+
+                yield json.dumps(
+                    {
+                        "type": "final",
+                        "is_task_complete": True,
+                        "content": final_content,
+                        "sources": [
+                            {"title": item["label"], "href": item["url"]}
+                            for item in crawled_updates
+                        ],
+                        "token_count": "0",
+                    }
+                ) + "\n"
+
+            return StreamingResponse(
+                gen_profile_updates(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
 
         if use_web_search:
             async def gen_web_search():

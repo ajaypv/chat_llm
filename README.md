@@ -13,6 +13,8 @@ The app supports:
 - category-based knowledge filtering
 - NL2SQL-style answers for restaurant/menu-related queries
 - knowledge upload and batch job tracking
+- a local profile page for goals, interests, and saved source links
+- profile-based web updates using Crawl4AI over saved links
 
 ## Project structure
 
@@ -43,6 +45,7 @@ chat_llm/
 - LangChain / LangGraph
 - OCI GenAI via `langchain-oci`
 - Oracle DB via `oracledb`
+- Crawl4AI + Playwright for profile-based web crawling
 
 ## How the project works
 
@@ -58,6 +61,14 @@ chat_llm/
    - assistant response text
    - tool activity/status updates
    - follow-up suggestions
+
+### Profile update flow
+
+1. The user saves goals, interests, and web source links from the frontend profile page.
+2. The frontend stores this profile in local storage and includes it in chat requests.
+3. When the user asks for things like `update me`, `latest news`, or `what's new`, the backend checks the saved profile links.
+4. Crawl4AI fetches content from the saved pages.
+5. The model produces a personalized update explaining why the latest information matters for the user's goals and interests.
 
 ### Knowledge flow
 
@@ -123,6 +134,15 @@ uv sync
 ```
 
 This creates a local virtual environment in `backend/.venv`.
+
+If you want profile-based web updates using Crawl4AI, also install Playwright browser binaries:
+
+```powershell
+Set-Location "c:\Users\AJay\Desktop\order_dossier\chat_llm\backend"
+uv run python -m playwright install
+```
+
+Without this step, normal chat still works, but profile-based web crawling cannot start.
 
 ## 5. Configure backend environment
 
@@ -217,6 +237,13 @@ Example request body:
 {
   "query": "Summarize outage preparedness guidance",
   "session_id": "local",
+  "profile": {
+    "goals": ["Track AI product launches"],
+    "interests": ["AI agents", "LangGraph"],
+    "links": [
+      {"label": "TechCrunch", "url": "https://techcrunch.com/"}
+    ]
+  },
   "categories": ["general"],
   "top_k": 10
 }
@@ -238,6 +265,8 @@ Example request body:
 - **PDF upload UI** for building knowledge collections
 - **Batch ingestion jobs** for embeddings
 - **Restaurant/menu DB query mode** via NL2SQL detection
+- **Profile page** for saved goals, interests, and source links
+- **Crawl4AI-powered updates** from user-saved web pages
 
 ## Development notes
 
@@ -245,6 +274,8 @@ Example request body:
 - Uploaded files are stored locally in `backend/knowledge/`.
 - Sample RAG documents are included in `backend/core/rag_docs/`.
 - The frontend is already wired to the backend using `NEXT_PUBLIC_CHAT_API_BASE` or `http://localhost:8000` by default.
+- The profile page stores user context in browser local storage only.
+- Crawl4AI-based updates require Playwright browser installation in the backend environment.
 
 ## Common setup issues
 
@@ -257,6 +288,18 @@ Make sure:
 - no firewall/proxy is blocking localhost ports
 
 ### Knowledge upload works but jobs fail
+
+Make sure Oracle DB connectivity, wallet configuration, and embedding tables are correctly set up.
+
+### Profile-based updates fail with Playwright or Crawl4AI errors
+
+Make sure:
+
+- backend dependencies were installed with `uv sync`
+- Playwright browsers were installed with `uv run python -m playwright install`
+- saved profile links are reachable from the backend machine
+
+If Playwright browsers are missing, the profile update flow will return a setup-related message instead of crawling pages.
 
 This usually means:
 

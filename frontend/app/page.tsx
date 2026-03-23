@@ -233,6 +233,12 @@ type ToolEvent = {
 
 type SourceRef = { href: string; title: string };
 
+type UserProfile = {
+  goals: string[];
+  interests: string[];
+  links: Array<{ id?: string; label?: string; url: string }>;
+};
+
 type SpeechRecognitionCtor = new () => {
   continuous: boolean;
   interimResults: boolean;
@@ -331,6 +337,7 @@ const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000
 const SELECTED_CATEGORIES_STORAGE_KEY = "rag.selectedCategories";
 const SELECTED_MODEL_STORAGE_KEY = "chat.selectedModel";
 const CHAT_SESSION_STORAGE_KEY = "chat.sessionId";
+const PROFILE_STORAGE_KEY = "chat.userProfile";
 
 const delay = (ms: number): Promise<void> =>
   // eslint-disable-next-line promise/avoid-new -- setTimeout requires a new Promise
@@ -478,6 +485,7 @@ const Example = () => {
   const [model, setModel] = useState<string>(models[0].id);
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [chatSessionId, setChatSessionId] = useState<string>(() => `session-${Date.now()}`);
+  const [userProfile, setUserProfile] = useState<UserProfile>({ goals: [], interests: [], links: [] });
   const [text, setText] = useState<string>("");
   const [useWebSearch, setUseWebSearch] = useState<boolean>(false);
   const [status, setStatus] = useState<
@@ -547,6 +555,32 @@ const Example = () => {
       if (raw) {
         setChatSessionId(raw);
       }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<UserProfile>;
+      setUserProfile({
+        goals: Array.isArray(parsed.goals) ? parsed.goals.map(String) : [],
+        interests: Array.isArray(parsed.interests) ? parsed.interests.map(String) : [],
+        links: Array.isArray(parsed.links)
+          ? parsed.links
+              .map((item) => ({
+                id: String(item?.id ?? ""),
+                label: String(item?.label ?? "").trim(),
+                url: String(item?.url ?? "").trim(),
+              }))
+              .filter((item) => item.url)
+          : [],
+      });
     } catch {
       // ignore
     }
@@ -760,6 +794,7 @@ const Example = () => {
           query: content,
           session_id: chatSessionId,
           model,
+          profile: userProfile,
           categories: selectedCategories,
           top_k: 10,
           use_web_search: useWebSearch,
@@ -897,7 +932,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, chatSessionId, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch]
+    [appendToolEvent, chatSessionId, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch, userProfile]
   );
 
   const addUserMessage = useCallback(
