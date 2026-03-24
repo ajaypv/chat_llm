@@ -63,6 +63,23 @@ def _build_profile_media_payload(crawled_updates: list[dict[str, object]]) -> li
     return media_items
 
 
+def _normalize_history(payload_history: object) -> list[dict[str, str]]:
+    history: list[dict[str, str]] = []
+    if not isinstance(payload_history, list):
+        return history
+
+    for item in payload_history:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        history.append({"role": role, "content": content})
+
+    return history
+
+
 def _should_use_semantic_search(query: str, categories: list[str]) -> bool:
     text = str(query or "").strip()
     if not text:
@@ -298,6 +315,7 @@ def build_app() -> FastAPI:
         ]
 
         session_id = payload.get("session_id") or "local"
+        conversation_history = _normalize_history(payload.get("history"))
         model_id = str(payload.get("model") or DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL
         top_k = int(payload.get("top_k") or 10)
         use_web_search = bool(payload.get("use_web_search"))
@@ -330,6 +348,22 @@ def build_app() -> FastAPI:
             )
         ) and bool(profile_links)
 
+        if not wants_profile_update and profile_links and conversation_history:
+            combined_recent_context = "\n".join(
+                f"{item['role']}: {item['content']}" for item in conversation_history[-6:]
+            ).lower()
+            wants_profile_update = any(
+                phrase in combined_recent_context
+                for phrase in (
+                    "update me",
+                    "latest update",
+                    "latest news",
+                    "what's new",
+                    "whats new",
+                    "recent updates",
+                )
+            )
+
         if wants_profile_update:
             async def gen_profile_updates():
                 import json
@@ -337,7 +371,7 @@ def build_app() -> FastAPI:
                 yield json.dumps(
                     {
                         "updates": "Model calling tool: profile_web_crawl with args "
-                        + json.dumps({"links": [link.get("url") for link in profile_links[:3]]})
+                        + json.dumps({"links": [link.get("url") for link in profile_links if link.get("url")]})
                     }
                 ) + "\n"
 
@@ -356,7 +390,16 @@ def build_app() -> FastAPI:
                 ) + "\n"
 
                 prompt = build_profile_update_prompt(
-                    query=query,
+                    query=(
+                        (
+                            f"{query}\n\n"
+                            f"Recent conversation context:\n" + "\n".join(
+                                f"- {item['role']}: {item['content']}" for item in conversation_history[-6:]
+                            )
+                        )
+                        if conversation_history
+                        else query
+                    ),
                     goals=profile_goals,
                     interests=profile_interests,
                     crawled_updates=crawled_updates,
@@ -526,7 +569,7 @@ def build_app() -> FastAPI:
 
             async def gen_agentic():
                 agent = KnowledgeAssistantAgent(model_id=model_id)
-                async for chunk in agent.oci_stream(query, session_id=session_id):
+                async for chunk in agent.oci_stream(query, session_id=session_id, history=conversation_history):
                     import json
 
                     yield json.dumps(chunk) + "\n"

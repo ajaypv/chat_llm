@@ -252,6 +252,11 @@ type UserProfile = {
   links: Array<{ id?: string; label?: string; url: string }>;
 };
 
+type HistoryTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type SpeechRecognitionCtor = new () => {
   continuous: boolean;
   interimResults: boolean;
@@ -572,6 +577,29 @@ const MessageMediaGallery = ({ media }: { media: MediaCard[] }) => {
       </div>
     </div>
   );
+};
+
+const buildHistoryPayload = (messages: MessageType[], pendingUserMessage: string): HistoryTurn[] => {
+  const history: HistoryTurn[] = messages
+    .flatMap((message) => {
+      const latestVersion = message.versions.at(-1);
+      const content = String(latestVersion?.content ?? "").trim();
+      if (!content) return [];
+      if (message.from !== "user" && message.from !== "assistant") return [];
+      return [{ role: message.from as HistoryTurn["role"], content }];
+    })
+    .slice(-8);
+
+  const trimmedPending = String(pendingUserMessage || "").trim();
+  if (!trimmedPending) {
+    return history;
+  }
+
+  if (history.length && history[history.length - 1]?.role === "user" && history[history.length - 1]?.content === trimmedPending) {
+    return history;
+  }
+
+  return [...history, { role: "user", content: trimmedPending } as HistoryTurn].slice(-8);
 };
 
 const Example = () => {
@@ -907,6 +935,7 @@ const Example = () => {
           session_id: chatSessionId,
           model,
           profile: userProfile,
+          history: buildHistoryPayload(messagesRef.current, content),
           categories: selectedCategories,
           top_k: 10,
           use_web_search: useWebSearch,

@@ -88,7 +88,7 @@ def _extract_video_urls(html: str, page_url: str) -> list[str]:
 async def fetch_profile_link_updates(
     links: list[dict[str, str]],
     request_id: str,
-    max_links: int = 3,
+    max_links: int = 6,
 ) -> list[dict[str, object]]:
     usable_links = [
         {
@@ -210,6 +210,10 @@ def build_profile_update_prompt(
         "Focus primarily on what is new, useful, and actionable in the crawled pages.\n"
         "Prioritize updates that best match the user's goals and interests instead of listing everything.\n"
         "Explain why the updates matter for the user's goals and interests in direct, specific language.\n"
+        "Infer the user's likely geography, constraints, and exposure from their goals, interests, and saved sources when possible.\n"
+        "When a geopolitical, economic, energy, logistics, or policy event appears, explain the second-order impact chain on the user, not just the headline.\n"
+        "Example of desired reasoning depth: if conflict risks blocking the Strait of Hormuz and the user context suggests India or energy dependence, explain how that can affect LPG supply, fuel prices, inflation, shipping, and household or business decisions.\n"
+        "Do not invent country-specific exposure; tie claims to the crawled source content and clearly label uncertainty where needed.\n"
         "If a tool, framework, library, product, or trend appears that aligns with the user's profile, call that out explicitly and explain the relevance.\n"
         "When possible, compare the importance of the updates and highlight the highest-value one first.\n"
         "Keep the answer practical, concise, high-signal, and visually scannable. Avoid filler.\n"
@@ -218,9 +222,11 @@ def build_profile_update_prompt(
         "Then structure the response with these sections when relevant:\n"
         "1. Key updates\n"
         "2. Why this matters to you\n"
-        "3. Suggested next steps\n"
-        "4. Sources\n"
+        "3. Impact chain / what could happen next\n"
+        "4. Suggested next steps\n"
+        "5. Sources\n"
         "For each key update, prefer this sub-structure when possible: short headline, one-sentence proof point, and one-sentence implication.\n"
+        "For high-impact news, include concrete consequence bullets such as supply risk, price risk, policy risk, operational risk, and what the user should monitor next.\n"
         "Do not include an Images or Videos section in the prose. Rich media will be rendered separately in the UI.\n\n"
         f"User request:\n{query}\n\n"
         f"User goals:\n{goals_text}\n\n"

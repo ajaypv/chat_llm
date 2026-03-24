@@ -21,6 +21,22 @@ from chat_app.model_registry import DEFAULT_CHAT_MODEL
 logger = logging.getLogger(__name__)
 
 
+def _coerce_history_messages(history: list[dict[str, Any]] | None) -> list[AnyMessage]:
+    coerced: list[AnyMessage] = []
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "assistant":
+            coerced.append(AIMessage(content=content))
+        elif role == "user":
+            coerced.append(HumanMessage(content=content))
+    return coerced
+
+
 def _build_oci_chat_model(model_id: str = DEFAULT_CHAT_MODEL) -> ChatOCIGenAI:
     model_kwargs: dict[str, Any] = {}
     configured_temperature = os.getenv("CHAT_MODEL_TEMPERATURE")
@@ -73,12 +89,13 @@ class KnowledgeAssistantAgent:
             checkpointer= InMemorySaver()
         )
     
-    async def oci_stream(self, query, session_id, categories: list[str] | None = None) -> AsyncIterable[dict[str, Any]]:
+    async def oci_stream(self, query, session_id, categories: list[str] | None = None, history: list[dict[str, Any]] | None = None) -> AsyncIterable[dict[str, Any]]:
         """ Function to call agent and stream responses """
 
         self._active_categories = [str(c).strip() for c in (categories or []) if str(c).strip()]
-        
-        current_message = {"messages":[HumanMessage(query)]}
+
+        prior_messages = _coerce_history_messages(history)
+        current_message = {"messages": [*prior_messages, HumanMessage(query)]}
         config:RunnableConfig = {"run_id":str(session_id), "configurable": {"thread_id": str(session_id)}}
         final_response_content = None
         final_model_state = None
