@@ -1,7 +1,88 @@
 import logging
+import re
 from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_text(value: object, limit: int = 280) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _extract_page_title(markdown: str, html: str, fallback: str) -> str:
+    for line in markdown.splitlines():
+        candidate = str(line).strip()
+        if candidate.startswith("#"):
+            candidate = candidate.lstrip("#").strip()
+            if candidate:
+                return _clean_text(candidate, limit=140)
+
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+    if title_match:
+        return _clean_text(title_match.group(1), limit=140)
+
+    og_title_match = re.search(
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if og_title_match:
+        return _clean_text(og_title_match.group(1), limit=140)
+
+    return _clean_text(fallback, limit=140) or "Source"
+
+
+def _extract_page_summary(markdown: str, html: str) -> str:
+    for line in markdown.splitlines():
+        candidate = str(line).strip()
+        if not candidate or candidate.startswith("#") or candidate.startswith("!"):
+            continue
+        if len(candidate) >= 40:
+            return _clean_text(candidate, limit=280)
+
+    og_desc_match = re.search(
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if og_desc_match:
+        return _clean_text(og_desc_match.group(1), limit=280)
+
+    desc_match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        flags=re.IGNORECASE,
+    )
+    if desc_match:
+        return _clean_text(desc_match.group(1), limit=280)
+
+    return ""
+
+
+def _extract_video_urls(html: str, page_url: str) -> list[str]:
+    candidates: list[str] = []
+    patterns = [
+        r'<meta[^>]+property=["\']og:video(?::url)?["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<iframe[^>]+src=["\']([^"\']+)["\']',
+        r'<video[^>]+src=["\']([^"\']+)["\']',
+        r'<source[^>]+src=["\']([^"\']+)["\']',
+        r'https?://(?:www\.)?(?:youtube\.com/watch\?v=[^\s"\'<>]+|youtu\.be/[^\s"\'<>]+|player\.vimeo\.com/video/[^\s"\'<>]+)',
+    ]
+
+    for pattern in patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE):
+            candidate = urljoin(page_url, str(match).strip())
+            if not candidate:
+                continue
+            if candidate not in candidates:
+                candidates.append(candidate)
+            if len(candidates) >= 3:
+                return candidates
+
+    return candidates
 
 
 async def fetch_profile_link_updates(
@@ -58,8 +139,11 @@ async def fetch_profile_link_updates(
                         {
                             "label": link["label"],
                             "url": link["url"],
+                            "title": _extract_page_title(markdown, html, link["label"]),
+                            "summary": _extract_page_summary(markdown, html),
                             "content": content[:12000],
                             "image_urls": image_urls,
+                            "video_urls": _extract_video_urls(html, link["url"]),
                         }
                     )
                 except Exception as exc:
@@ -81,7 +165,10 @@ async def fetch_profile_link_updates(
                         "Crawl4AI could not start because Playwright browser binaries are not installed. "
                         "Run 'playwright install' in the backend environment before using profile-based web updates."
                     ),
+                    "title": "Crawler setup required",
+                    "summary": "Install Playwright browser binaries in the backend environment to enable profile-based news crawling.",
                     "image_urls": [],
+                    "video_urls": [],
                 }
             ]
         return [
@@ -89,7 +176,10 @@ async def fetch_profile_link_updates(
                 "label": "Crawler error",
                 "url": "local://crawl4ai/error",
                 "content": f"Crawl4AI could not start. Underlying error: {message}",
+                "title": "Crawler error",
+                "summary": _clean_text(message, limit=180),
                 "image_urls": [],
+                "video_urls": [],
             }
         ]
 
@@ -108,6 +198,8 @@ def build_profile_update_prompt(
         (
             f"Source label: {item['label']}\n"
             f"Source url: {item['url']}\n"
+            f"Source title: {item.get('title') or item['label']}\n"
+            f"Source summary: {item.get('summary') or 'N/A'}\n"
             f"Extracted content:\n{item['content']}"
         )
         for item in crawled_updates
@@ -120,14 +212,16 @@ def build_profile_update_prompt(
         "Explain why the updates matter for the user's goals and interests in direct, specific language.\n"
         "If a tool, framework, library, product, or trend appears that aligns with the user's profile, call that out explicitly and explain the relevance.\n"
         "When possible, compare the importance of the updates and highlight the highest-value one first.\n"
-        "Keep the answer practical, concise, and high-signal. Avoid filler.\n"
+        "Keep the answer practical, concise, high-signal, and visually scannable. Avoid filler.\n"
         "Use markdown.\n"
-        "Structure the response with these sections when relevant:\n"
+        "Start with a 2-3 bullet 'At a glance' section.\n"
+        "Then structure the response with these sections when relevant:\n"
         "1. Key updates\n"
         "2. Why this matters to you\n"
         "3. Suggested next steps\n"
         "4. Sources\n"
-        "Do not include an Images section in the prose. Images will be appended separately if available.\n\n"
+        "For each key update, prefer this sub-structure when possible: short headline, one-sentence proof point, and one-sentence implication.\n"
+        "Do not include an Images or Videos section in the prose. Rich media will be rendered separately in the UI.\n\n"
         f"User request:\n{query}\n\n"
         f"User goals:\n{goals_text}\n\n"
         f"User interests:\n{interests_text}\n\n"

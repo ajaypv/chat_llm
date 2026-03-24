@@ -112,11 +112,13 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import Image from "next/image";
 
 interface MessageType {
   key: string;
   from: "user" | "assistant";
   sources?: { href: string; title: string }[];
+  media?: MediaCard[];
   versions: {
     id: string;
     content: string;
@@ -220,6 +222,7 @@ type ChatStreamChunk = {
   content?: string;
   suggestions?: string; // JSON string from backend
   sources?: SourceRef[];
+  media?: MediaCard[];
 };
 
 type ToolEvent = {
@@ -232,6 +235,16 @@ type ToolEvent = {
 };
 
 type SourceRef = { href: string; title: string };
+
+type MediaCard = {
+  href: string;
+  title: string;
+  label?: string;
+  summary?: string;
+  preview_image?: string;
+  images?: string[];
+  videos?: string[];
+};
 
 type UserProfile = {
   goals: string[];
@@ -331,6 +344,8 @@ const toCitationUrl = (source: string): string => {
 };
 
 const isWebUrl = (value: string): boolean => /^https?:\/\//i.test(String(value || "").trim());
+
+const isRenderableRemoteMedia = (value: string): boolean => /^https?:\/\//i.test(String(value || "").trim());
 
 const API_BASE = process.env.NEXT_PUBLIC_CHAT_API_BASE || "http://localhost:8000";
 
@@ -469,6 +484,93 @@ const ModelItem = ({
         <div className="ml-auto size-4" />
       )}
     </ModelSelectorItem>
+  );
+};
+
+const MessageMediaGallery = ({ media }: { media: MediaCard[] }) => {
+  if (!media.length) return null;
+
+  return (
+    <div className="not-prose mt-4 space-y-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        Rich sources
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {media.map((item, idx) => {
+          const imageCount = Array.isArray(item.images) ? item.images.length : 0;
+          const videoCount = Array.isArray(item.videos) ? item.videos.length : 0;
+          const previewImage = isRenderableRemoteMedia(item.preview_image || "")
+            ? String(item.preview_image)
+            : "";
+
+          return (
+            <div
+              className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+              key={`${item.href || item.title}-${idx}`}
+            >
+              {previewImage ? (
+                <div className="relative aspect-[16/9] w-full overflow-hidden bg-slate-100">
+                  <Image
+                    alt={item.title || `Source ${idx + 1}`}
+                    className="object-cover"
+                    fill
+                    sizes="(max-width: 768px) 100vw, 33vw"
+                    src={previewImage}
+                    unoptimized
+                  />
+                </div>
+              ) : (
+                <div className="flex aspect-[16/9] items-center justify-center bg-gradient-to-br from-slate-100 to-slate-50 text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                  No preview
+                </div>
+              )}
+
+              <div className="space-y-3 p-4">
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#C74634]">
+                    {item.label || "Source"}
+                  </div>
+                  <div className="line-clamp-2 text-sm font-semibold leading-6 text-slate-900">
+                    {item.title || item.href || "Untitled source"}
+                  </div>
+                  {item.summary ? (
+                    <p className="line-clamp-3 text-sm leading-6 text-slate-600">{item.summary}</p>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {imageCount > 0 ? <Badge variant="secondary">{imageCount} image{imageCount > 1 ? "s" : ""}</Badge> : null}
+                  {videoCount > 0 ? <Badge variant="secondary">{videoCount} video{videoCount > 1 ? "s" : ""}</Badge> : null}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {item.href ? (
+                    <a
+                      className="inline-flex items-center rounded-xl bg-[#C74634] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#B33C2D]"
+                      href={item.href}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Open source
+                    </a>
+                  ) : null}
+                  {item.videos?.[0] ? (
+                    <a
+                      className="inline-flex items-center rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                      href={item.videos[0]}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Watch video
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 };
 
@@ -779,6 +881,16 @@ const Example = () => {
     );
   }, []);
 
+  const setMessageMedia = useCallback((messageId: string, media: MediaCard[]) => {
+    if (!media.length) return;
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (!msg.versions.some((v) => v.id === messageId)) return msg;
+        return { ...msg, media };
+      })
+    );
+  }, []);
+
   const streamResponse = useCallback(
     async (messageId: string, content: string) => {
       setStatus("streaming");
@@ -908,6 +1020,25 @@ const Example = () => {
                 setMessageSources(messageId, parsedSources);
               }
 
+              if (Array.isArray(chunk.media)) {
+                const parsedMedia = chunk.media
+                  .map((item: MediaCard) => ({
+                    href: String(item?.href ?? "").trim(),
+                    title: String(item?.title ?? item?.href ?? "Source").trim(),
+                    label: String(item?.label ?? "").trim(),
+                    summary: String(item?.summary ?? "").trim(),
+                    preview_image: String(item?.preview_image ?? "").trim(),
+                    images: Array.isArray(item?.images)
+                      ? item.images.map((value: string) => String(value).trim()).filter(Boolean)
+                      : [],
+                    videos: Array.isArray(item?.videos)
+                      ? item.videos.map((value: string) => String(value).trim()).filter(Boolean)
+                      : [],
+                  }))
+                  .filter((item: MediaCard) => item.href || item.title);
+                setMessageMedia(messageId, parsedMedia);
+              }
+
               if (chunk.suggestions) {
                 try {
                   const parsed = JSON.parse(chunk.suggestions) as {
@@ -932,7 +1063,7 @@ const Example = () => {
       return;
 
     },
-    [appendToolEvent, chatSessionId, model, selectedCategories, setMessageSources, updateMessageContent, useWebSearch, userProfile]
+    [appendToolEvent, chatSessionId, model, selectedCategories, setMessageMedia, setMessageSources, updateMessageContent, useWebSearch, userProfile]
   );
 
   const addUserMessage = useCallback(
@@ -1322,6 +1453,7 @@ const Example = () => {
                               ))}
                             </div>
                           ) : null}
+                          {message.media?.length ? <MessageMediaGallery media={message.media} /> : null}
                         </div>
                       </MessageContent>
                       {message.tools?.length ? (

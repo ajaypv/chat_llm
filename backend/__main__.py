@@ -37,6 +37,32 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _build_profile_media_payload(crawled_updates: list[dict[str, object]]) -> list[dict[str, object]]:
+    media_items: list[dict[str, object]] = []
+    for item in crawled_updates:
+        title = str(item.get("title") or item.get("label") or "Source").strip() or "Source"
+        href = str(item.get("url") or "").strip()
+        summary = str(item.get("summary") or "").strip()
+        label = str(item.get("label") or title).strip() or title
+        image_urls = item.get("image_urls") if isinstance(item.get("image_urls"), list) else []
+        video_urls = item.get("video_urls") if isinstance(item.get("video_urls"), list) else []
+        preview_image = str(image_urls[0]).strip() if image_urls else ""
+
+        media_items.append(
+            {
+                "title": title,
+                "href": href,
+                "label": label,
+                "summary": summary,
+                "preview_image": preview_image,
+                "images": [str(url).strip() for url in image_urls if str(url).strip()],
+                "videos": [str(url).strip() for url in video_urls if str(url).strip()],
+            }
+        )
+
+    return media_items
+
+
 def _should_use_semantic_search(query: str, categories: list[str]) -> bool:
     text = str(query or "").strip()
     if not text:
@@ -351,6 +377,7 @@ def build_app() -> FastAPI:
                     ) + "\n"
 
                 images_markdown = build_profile_images_markdown(crawled_updates)
+                rich_media = _build_profile_media_payload(crawled_updates)
                 final_content = assembled_response
                 if images_markdown:
                     final_content = f"{assembled_response.rstrip()}\n\n---\n\n## Visual references\n\n{images_markdown}\n"
@@ -361,9 +388,10 @@ def build_app() -> FastAPI:
                         "is_task_complete": True,
                         "content": final_content,
                         "sources": [
-                            {"title": item["label"], "href": item["url"]}
+                            {"title": str(item.get("title") or item["label"]), "href": item["url"]}
                             for item in crawled_updates
                         ],
+                        "media": rich_media,
                         "token_count": "0",
                     }
                 ) + "\n"
