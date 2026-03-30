@@ -55,7 +55,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 Wallet_InnLabDatalakeDB.zip
-database/Wallet_InnLabDatalakeDB/
-
-# local backend env
-/backend/.env
+database/Wallet_InnLabDatalakeDB/\n# local backend env\n/backend/.env

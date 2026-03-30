@@ -36,6 +36,28 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DEEP_RESEARCH_TRIGGER_PATTERNS = (
+    "provide more info on this",
+    "provide more information on this",
+    "research this more",
+    "go deeper on this",
+    "dig deeper on this",
+    "more detail on this",
+    "tell me more about this",
+    "explain this in more detail",
+)
+
+LATEST_NEWS_PATTERNS = (
+    "latest news",
+    "latest indian news",
+    "latest india news",
+    "india news",
+    "indian news",
+    "what is happening in india",
+    "what's happening in india",
+    "news in india",
+)
+
 
 def _build_profile_media_payload(crawled_updates: list[dict[str, object]]) -> list[dict[str, object]]:
     media_items: list[dict[str, object]] = []
@@ -78,6 +100,60 @@ def _normalize_history(payload_history: object) -> list[dict[str, str]]:
         history.append({"role": role, "content": content})
 
     return history
+
+
+def _should_run_deep_research(query: str, history: list[dict[str, str]]) -> bool:
+    lowered = str(query or "").strip().lower()
+    if any(pattern in lowered for pattern in DEEP_RESEARCH_TRIGGER_PATTERNS):
+        return True
+
+    if history:
+        short_follow_up = len(lowered.split()) <= 10
+        topical_followups = (
+            "more info",
+            "more information",
+            "go deeper",
+            "more detail",
+            "explain more",
+            "expand this",
+            "research more",
+        )
+        if short_follow_up and any(pattern in lowered for pattern in topical_followups):
+            return True
+
+    return False
+
+
+def _should_route_to_live_research(query: str, use_web_search: bool, history: list[dict[str, str]]) -> bool:
+    lowered = str(query or "").strip().lower()
+    if use_web_search:
+        return True
+    if any(pattern in lowered for pattern in LATEST_NEWS_PATTERNS):
+        return True
+    return _should_run_deep_research(query, history)
+
+
+def _build_deep_research_topic(query: str, history: list[dict[str, str]]) -> str:
+    recent_context = "\n".join(
+        f"{item['role']}: {item['content']}" for item in history[-8:]
+    ).strip()
+    if recent_context:
+        return (
+            "Use the recent conversation to infer the exact topic the user wants researched more deeply.\n"
+            f"Latest user follow-up: {query}\n\n"
+            f"Recent conversation:\n{recent_context}\n"
+        )
+    return query
+
+
+async def _run_web_search_query(query: str) -> tuple[str, list[dict[str, str]]]:
+    client = _build_oci_web_search_client()
+    search_model = client.bind_tools([{"type": "web_search_preview"}])
+    response = await asyncio.to_thread(
+        search_model.invoke,
+        [HumanMessage(content=query)],
+    )
+    return _extract_web_search_payload(response)
 
 
 def _should_use_semantic_search(query: str, categories: list[str]) -> bool:
@@ -449,7 +525,7 @@ def build_app() -> FastAPI:
                 },
             )
 
-        if use_web_search:
+        if _should_route_to_live_research(query, use_web_search, conversation_history):
             async def gen_web_search():
                 import json
 
@@ -522,6 +598,120 @@ def build_app() -> FastAPI:
                     }) + "\n"
 
             return StreamingResponse(gen_web_search(), media_type="application/x-ndjson")
+
+        if _should_run_deep_research(query, conversation_history):
+            async def gen_deep_research():
+                import json
+
+                research_topic = _build_deep_research_topic(query, conversation_history)
+                search_queries = [
+                    research_topic,
+                    f"Latest developments and primary sources about: {research_topic}",
+                    f"How does this affect users, markets, operations, or policy: {research_topic}",
+                ]
+
+                all_sources: list[dict[str, str]] = []
+                search_notes: list[str] = []
+
+                for idx, search_query in enumerate(search_queries, start=1):
+                    yield json.dumps({
+                        "updates": "Model calling tool: deep_web_search with args " + json.dumps({"query": search_query, "step": idx})
+                    }) + "\n"
+
+                    try:
+                        result_text, result_sources = await _run_web_search_query(search_query)
+                    except Exception as exc:
+                        logger.exception("[rid=%s] deep research web search failed: %s", request_id, exc)
+                        result_text = f"Search step {idx} failed: {str(exc)}"
+                        result_sources = []
+
+                    if result_text:
+                        search_notes.append(f"Search step {idx}: {result_text}")
+                    for source in result_sources:
+                        if source not in all_sources:
+                            all_sources.append(source)
+
+                    yield json.dumps({
+                        "updates": "Tool deep_web_search responded with:\n" + (result_text or f"Search step {idx} returned no summary.")
+                    }) + "\n"
+
+                crawled_updates: list[dict[str, object]] = []
+                if all_sources:
+                    yield json.dumps({
+                        "updates": "Model calling tool: profile_web_crawl with args " + json.dumps({"links": [item.get("href") for item in all_sources[:6]]})
+                    }) + "\n"
+                    crawled_updates = await fetch_profile_link_updates(
+                        [
+                            {"label": item.get("title", "Source"), "url": item.get("href", "")}
+                            for item in all_sources[:6]
+                            if item.get("href")
+                        ],
+                        request_id=request_id,
+                        max_links=6,
+                    )
+                    yield json.dumps({
+                        "updates": "Tool profile_web_crawl responded with:\n" + (
+                            "\n\n".join(f"{item['label']} ({item['url']})" for item in crawled_updates)
+                            or "No crawlable web pages returned from deep research."
+                        )
+                    }) + "\n"
+
+                synthesis_prompt = (
+                    "You are in deep research mode. Synthesize the topic using the conversation, web search findings, and crawled source pages.\n"
+                    "Your job is to produce a detailed but well-structured answer with stronger evidence, nuance, uncertainty handling, and second-order impact analysis.\n"
+                    "Prefer primary-source style findings when available.\n"
+                    "If the topic is geopolitics, economics, energy, or supply chains, explain the transmission path from the event to real-world user impact.\n"
+                    "Use markdown.\n"
+                    "Structure the answer as:\n"
+                    "1. What this is about\n"
+                    "2. What the latest evidence says\n"
+                    "3. Why it matters / impact chain\n"
+                    "4. What to watch next\n"
+                    "5. Sources\n\n"
+                    f"User follow-up:\n{query}\n\n"
+                    f"Recent conversation:\n" + "\n".join(f"- {item['role']}: {item['content']}" for item in conversation_history[-8:]) + "\n\n"
+                    f"Web search findings:\n" + ("\n\n".join(search_notes) if search_notes else "No web search findings were available.") + "\n\n"
+                    f"Crawled source pages:\n" + (
+                        "\n\n".join(
+                            f"Source title: {item.get('title') or item.get('label')}\n"
+                            f"Source url: {item.get('url')}\n"
+                            f"Summary: {item.get('summary') or 'N/A'}\n"
+                            f"Content:\n{item.get('content') or ''}"
+                            for item in crawled_updates
+                        )
+                        if crawled_updates else
+                        "No crawled source pages were available."
+                    )
+                    + "\n\nAnswer:\n"
+                )
+
+                assembled_response = ""
+                async for text_chunk in stream_augmented_response(synthesis_prompt, model_id=model_id):
+                    assembled_response += str(text_chunk)
+                    yield json.dumps({
+                        "type": "delta",
+                        "is_task_complete": False,
+                        "delta": str(text_chunk),
+                    }) + "\n"
+
+                yield json.dumps({
+                    "type": "final",
+                    "is_task_complete": True,
+                    "content": assembled_response,
+                    "sources": all_sources[:12],
+                    "media": _build_profile_media_payload(crawled_updates),
+                    "token_count": "0",
+                }) + "\n"
+
+            return StreamingResponse(
+                gen_deep_research(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
 
         use_semantic_search = _should_use_semantic_search(query, categories_list)
 
